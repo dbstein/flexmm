@@ -1,0 +1,57 @@
+\documentclass{article}
+
+\usepackage[a4paper,top=3cm,bottom=2cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+\usepackage{etoolbox}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{subcaption}
+\usepackage{tikz}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+\usepackage{mathtools}
+\usepackage{MnSymbol}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\usepackage{cleveref}
+
+\newcommand\mycommfont[1]{\footnotesize\ttfamily\textcolor{blue}{#1}}
+\SetCommentSty{mycommfont}
+
+\makeatletter
+\newcommand*{\declarecommand}{%
+  \@star@or@long\declare@command
+}
+\newcommand*{\declare@command}[1]{%
+  \provide@command{#1}{}%
+  \renew@command{#1}%
+}
+\makeatother
+
+\declarecommand{\nc}{n_\textnormal{cutoff}}
+\declarecommand{\inp}{_\textnormal{input}}
+\declarecommand{\smin}{_\textnormal{min}}
+\declarecommand{\smax}{_\textnormal{max}}
+\declarecommand{\arange}{\textnormal{arange}}
+\declarecommand{\pluseq}{\mathrel{{+}{=}}}
+
+
+\title{flexmm: A python/numba framework for FMM implementations}
+
+\begin{document}
+
+\maketitle
+
+\section{What does this package do?}
+
+\subsection{What does this do now?}
+
+This package is an organization framework for implementing the Fast Multipole Method, with minimal dependences and an easy to use interface. The design allows the easy implementation of different algorithms, running on top of a single driver.
+
+The main driver currently supports:
+\begin{enumerate}
+	\item Source to source point FMM
+	\item Source to target point FMM
+\end{enumerate}
+
+There are two separate implemtnations,  a ``Kernel-Independent'' FMM and a ``Black-Box FMM''.  Hopefully these demonstrate how to setup and define an FMM to run on top of the driver.  Right now it is a little cludgy.
+
+\end{document}
