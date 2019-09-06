@@ -9,11 +9,11 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 setup(
-    name='pykifmm2d',
+    name='flexmm',
     version='0.0.1',
     description='Pure python Kernel-Independent FMM in 2D',
     long_description=long_description,
-    url='https://github.com/dbstein/pykifmm2d/',
+    url='https://github.com/dbstein/flexmm/',
     author='David Stein',
     author_email='dstein@flatironinstitute.org',
     classifiers=[
