@@ -1,6 +1,6 @@
 import flexmm2d
 import flexmm2d.kernel_functions
-import flexmm2d.fmm
+import flexmm2d.fmm as fmm
 import flexmm2d.bbfmm
 from flexmm2d.misc.utils import random2
 import numpy as np
@@ -68,8 +68,8 @@ elif test == 'clustered':
     bbox = [0,1,0,1]
 elif test == 'circle':
     rand_theta = np.random.rand(int(N_source))*2*np.pi
-    px = np.cos(rand_theta)
-    py = np.sin(rand_theta)
+    px = np.cos(rand_theta)*100
+    py = np.sin(rand_theta)*100
     rx = (np.random.rand(N_target)-0.5)*10
     ry = (np.random.rand(N_target)-0.5)*10
     bbox = [-5,5,5,5]
@@ -134,9 +134,9 @@ if reference:
 
 # do my FMM (once first, to compile functions...)
 functions = flexmm2d.bbfmm.get_functions(functions)
-functions = flexmm2d.fmm.get_functions(functions)
+functions = fmm.get_functions(functions)
 functions = flexmm2d.bbfmm.wrap_functions(functions)
-FMM = flexmm2d.fmm.FMM(px[:20*N_cutoff], py[:20*N_cutoff], functions, Nequiv, N_cutoff)
+FMM = fmm.FMM(px[:20*N_cutoff], py[:20*N_cutoff], functions, Nequiv, N_cutoff)
 flexmm2d.bbfmm.precompute(FMM, p)
 FMM.general_precomputations()
 FMM.build_expansions(tau)
@@ -144,7 +144,7 @@ _ = FMM.evaluate_to_points(px[:20*N_cutoff], py[:20*N_cutoff], True)
 
 st = time.time()
 print('')
-FMM = flexmm2d.fmm.FMM(px, py, functions, Nequiv, N_cutoff, bbox=bbox)
+FMM = fmm.FMM(px, py, functions, Nequiv, N_cutoff, bbox=bbox)
 flexmm2d.bbfmm.precompute(FMM, p)
 FMM.general_precomputations()
 print('pyfmmlib2d precompute took:           {:0.1f}'.format((time.time()-st)*1000))

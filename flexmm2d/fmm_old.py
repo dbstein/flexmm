@@ -13,50 +13,22 @@ def distribute(ucs, temp, pi, li, li2):
             ucs[li2[pi[i]]] = temp[li[i]]
 
 @numba.njit(parallel=True)
-def build_interaction_list(parents, pcoll, pchild, xmid, ymid, width, li, dilists):
-    """
-    Ahead of time interaction list preparation
-    """
-    # loop over leaves in this level
-    n = parents.size
-    dilists[:] = -1
+def add_interactions(doit, ci4, colleagues, xmid, ymid, PLEs, M2Ls, Nequiv, li):
+    n = doit.shape[0]
     for i in numba.prange(n):
-        # parents index
-        ind = parents[i]
-        xmidi = xmid[i]
-        ymidi = ymid[i]
-        # loop over parents colleagues
-        for j in range(9):
-            pi = pcoll[ind, j]
-            # if colleague exists and isn't the parent itself
-            if pi >= 0 and pi != ind:
-                pch = pchild[pi]
-                # loop over colleagues children
-                for k in range(4):
-                    ci = pch + k
-                    # get the distance offsets
-                    xdist = xmid[ci]-xmidi
-                    ydist = ymid[ci]-ymidi
-                    xd = int(np.round(xdist/width))
-                    yd = int(np.round(ydist/width))
-                    # get index into mutlipoles 
-                    di = li[ci]
-                    # if the multipole was formed, add in interaction
+        if doit[i]:
+            dii = ci4[i]
+            for j in range(9):
+                ci = colleagues[i,j]
+                if ci >= 0 and ci != i:
+                    xdist = int(np.sign(xmid[ci]-xmid[i]))
+                    ydist = int(np.sign(ymid[ci]-ymid[i]))
+                    di = li[ci4[ci]]
                     if di >= 0:
-                        for ii in range(7):
-                            for jj in range(7):
-                                if not (ii in [2,3,4] and jj in [2,3,4]):
-                                    if xd == ii-3 and yd == jj-3:
-                                        dilists[ii, jj, i] = di
-
-@numba.njit(parallel=True)
-def add_interactions_prepared(M2Ls, PLEs, dilist, Nequiv):
-    # loop over leaves in this level
-    for i in numba.prange(dilist.shape[0]):
-        di = dilist[i]
-        if di >= 0:
-            for k in range(Nequiv):
-                PLEs[i,k] += M2Ls[di,k]
+                        for k in range(4):
+                            for ll in range(PLEs.shape[1]):
+                                PLEs[4*dii+k, ll] += \
+                                    M2Ls[xdist+1,ydist+1,k*Nequiv+ll,di]
 
 def fake_print(*args, **kwargs):
     pass
@@ -195,39 +167,6 @@ def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None, mdtype=float):
         np.fill_diagonal(out, 0.0)
     return out
 
-class M2L_Evaluator(object):
-    def __init__(self, m2l, svd_tol):
-        self.m2l = m2l
-        self.svd_tol = svd_tol
-        S = np.linalg.svd(self.m2l)
-        cuts = np.where(S[1] > svd_tol)[0]
-        if len(cuts) > 0:
-            cutoff = np.where(S[1] > svd_tol)[0][-1] + 1
-            # if this is the case, svd compression probably saves time
-            if 2*cutoff < m2l.shape[0]:
-                self.M2 = S[0][:,:cutoff].copy()
-                A1 = S[1][:cutoff]
-                A2 = S[2][:cutoff]
-                self.M1 = A2*A1[:,None]
-                self._call = self._call_svd
-                self.cutoff = cutoff
-                # print(cutoff)
-            else:
-                self._call = self._call_mat
-                # print('nocompress')
-        else:
-            self._call = self._call_null
-    def _call_mat(self, tau, out, work):
-        np.matmul(self.m2l, tau, out)
-    def _call_svd(self, tau, out, work):
-        # work = np.empty([self.M1.shape[0], tau.shape[1]], dtype=tau.dtype)
-        np.matmul(self.M1, tau, out=work)
-        np.matmul(self.M2, work, out=out) # this step seems annoyingly slow...
-    def _call_null(self, tau, out, work):
-        out[:] = 0.0
-    def __call__(self, tau, out, work=None):
-        self._call(tau, out, work)
-
 class FMM(object):
     def __init__(self, x, y, functions, Nequiv=48, Ncutoff=50, iscomplex=False, bbox=None, verbose=False):
         self.x = x
@@ -245,27 +184,52 @@ class FMM(object):
         self.tree = Tree(self.x, self.y, self.Ncutoff, self.bbox)
         tree_formation_time = (time.time() - st)*1000
         self.print('....Tree formed in:             {:0.1f}'.format(tree_formation_time))
-    def general_precomputations(self, svd_tol=1e-12):
-        # build SVD compression
+    def general_precomputations(self):
         M2LS = self.precomputations['M2LS']
-        M2LFS = [None,]
-        for ind in range(1, self.tree.levels):
-            M2LF = np.empty([7,7], dtype=object)
-            M2L = M2LS[ind]
-            for i in range(7):
-                for j in range(7):
-                    if not (i in [2,3,4] and j in [2,3,4]):
-                        M2LF[i,j] = M2L_Evaluator(M2L[i,j], svd_tol)
-            M2LFS.append(M2LF)
-        self.precomputations['M2LFS'] = M2LFS
+        Nequiv = self.Nequiv
+        tree = self.tree
+        # get all Collected M2L translations
+        CM2LS = []
+        CM2LS.append(None)
+        base_shifts_x = np.empty([3,3], dtype=int)
+        base_shifts_y = np.empty([3,3], dtype=int)
+        for kkx in range(3):
+            for kky in range(3):
+                base_shifts_x[kkx, kky] = 2*(kkx-1)
+                base_shifts_y[kkx, kky] = 2*(kky-1)
+        for ind in range(1, tree.levels):
+            CM2Lhere = np.zeros([3,3,4*Nequiv,4*Nequiv], dtype=self.dtype)
+            M2Lhere = M2LS[ind]
+            for kkx in range(3):
+                for kky in range(3):
+                    if not (kkx-1 == 0 and kky-1 == 0):
+                        CM2Lh = CM2Lhere[kkx, kky]
+                        base_shift_x = base_shifts_x[kkx, kky]
+                        base_shift_y = base_shifts_y[kkx, kky]
+                        for ii in range(2):
+                            for jj in range(2):        
+                                shiftx = base_shift_x - ii + 3
+                                shifty = base_shift_y - jj + 3
+                                base = 2*ii + jj
+                                for iii in range(2):
+                                    for jjj in range(2):
+                                        full_shift_x = shiftx + iii
+                                        full_shift_y = shifty + jjj
+                                        bb = 2*iii + jjj
+                                        if full_shift_x-3 in [-1,0,1] and full_shift_y-3 in [-1,0,1]:
+                                            CM2Lh[base*Nequiv:(base+1)*Nequiv,bb*Nequiv:(bb+1)*Nequiv] = 0.0
+                                        else:
+                                            CM2Lh[base*Nequiv:(base+1)*Nequiv,bb*Nequiv:(bb+1)*Nequiv] = \
+                                                M2Lhere[full_shift_x, full_shift_y]
+            CM2LS.append(CM2Lhere)
+        self.precomputations['CM2LS'] = CM2LS
     def build_expansions(self, tau):
         functions = self.functions
         tree = self.tree
         precomputations = self.precomputations
         M2MC = precomputations['M2MC']
         L2LC = precomputations['L2LC']
-        M2LS = precomputations['M2LS']
-        M2LFS = precomputations['M2LFS']
+        CM2LS = precomputations['CM2LS']
 
         partial_multipole_to_multipole = functions['partial_multipole_to_multipole']
         partial_local_to_local = functions['partial_local_to_local']
@@ -300,41 +264,26 @@ class FMM(object):
         self.print('....Time for upwards pass:      {:0.2f}'.format(1000*(et-st)))
         # downwards pass - start at top and work down to build up local expansions
         st = time.time()
-        self.Partial_Local_Expansions = [None,]*tree.levels
-        self.Local_Expansions = [None,]*tree.levels
-        self.Local_Expansions[0] = np.zeros([1, Nequiv], dtype=self.dtype)
-        self.Local_Expansions[1] = np.zeros([4, Nequiv], dtype=self.dtype)
-        for ind in range(2, tree.levels):
+        Partial_Local_Expansions = [None,]*tree.levels
+        Partial_Local_Expansions[0] = np.zeros([1, Nequiv], dtype=self.dtype)
+        Local_Expansions = [None,]*tree.levels
+        for ind in range(tree.levels):
             Level = tree.Levels[ind]
-            Parent_Level = tree.Levels[ind-1]
-            if ind == 2:
-                self.Partial_Local_Expansions[ind] = np.zeros([16, Nequiv], dtype=self.dtype)
-            M2Ls = np.zeros([self.multipoles[ind].shape[0], Nequiv])
-            largest_cutoff = 0
-            for i in range(7):
-                for j in range(7):
-                    if hasattr(M2LFS[ind][i,j], 'cutoff'):
-                        largest_cutoff = max(largest_cutoff, M2LFS[ind][i,j].cutoff)
-            # build the interaction lists
-            dilists = np.empty([7, 7, Level.n_node], dtype=int)
-            build_interaction_list(Level.parent_ind, Parent_Level.colleagues, Parent_Level.children_ind, Level.xmid, Level.ymid, Level.width, Level.this_density_ind, dilists)
-            work = np.empty([largest_cutoff, self.multipoles[ind].shape[0]], dtype=tau.dtype)
-            for i in range(7):
-                for j in range(7):
-                    if not (i in [2,3,4] and j in [2,3,4]):
-                        workmat = work[:M2LFS[ind][i,j].cutoff] if hasattr(M2LFS[ind][i,j], 'cutoff') else None
-                        M2LFS[ind][i,j](self.multipoles[ind].T, out=M2Ls.T, work=workmat)
-                        add_interactions_prepared(M2Ls, self.Partial_Local_Expansions[ind], dilists[i,j], Nequiv)
-            # convert partial local expansions to local local_expansions
-            self.Local_Expansions[ind] = partial_local_to_local(self.Partial_Local_Expansions[ind], precomputations, ind)
-            # move local expansions downwards
-            if ind < tree.levels-1:
-                doit = Level.compute_downwards
+            # compute local expansions for this level
+            Local_Expansions[ind] = partial_local_to_local(Partial_Local_Expansions[ind], precomputations, ind)
+            if ind != tree.levels-1:
+                # move local expansions downwards
                 descendant_level = tree.Levels[ind+1]
-                local_expansions = self.Local_Expansions[ind][doit]
+                doit = Level.compute_downwards
+                local_expansions = Local_Expansions[ind][doit]
                 partial_local_expansions = L2LC[ind].dot(local_expansions.T).T
                 sorter = np.argsort(Level.children_ind[doit])
-                self.Partial_Local_Expansions[ind+1] = partial_local_expansions[sorter].reshape([descendant_level.n_node, Nequiv])
+                Partial_Local_Expansions[ind+1] = partial_local_expansions[sorter].reshape([descendant_level.n_node, Nequiv])
+                # compute all possible interactions
+                M2Ls = np.matmul(CM2LS[ind+1], self.reshaped_multipoles[ind+1].T)
+                ci4 = (Level.children_ind/4).astype(int)
+                add_interactions(doit, ci4, Level.colleagues, Level.xmid, Level.ymid, Partial_Local_Expansions[ind+1], M2Ls, Nequiv, descendant_level.parent_density_ind)
+        self.Local_Expansions = Local_Expansions
         et = time.time()
         self.print('....Time for downwards pass:    {:0.2f}'.format(1000*(et-st)))
     def evaluate_to_points(self, x,  y, check_self=False):

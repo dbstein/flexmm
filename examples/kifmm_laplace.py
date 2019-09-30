@@ -1,6 +1,6 @@
 import flexmm2d
 import flexmm2d.kernel_functions
-import flexmm2d.fmm
+import flexmm2d.fmm as fmm
 import flexmm2d.kifmm
 from flexmm2d.misc.utils import random2
 import numpy as np
@@ -40,9 +40,10 @@ KF = functions['kernel_form']
 KA = functions['kernel_apply']
 KAS = functions['kernel_apply_self']
 
-N_source = 1000*100
-N_target = 1000*100
+N_source = 1000*1000
+N_target = 1000*1000*10
 test = 'circle' # clustered or circle or uniform
+reference_precision = 4
 
 # construct some data to run FMM on
 if test == 'uniform':
@@ -77,9 +78,9 @@ else:
     raise Exception('Test is not defined')
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 50
-# number of modes in Chebyshev expansions
-Nequiv = 50
+N_cutoff = 200
+# number of modes in source/check surfaces
+Nequiv = 60
 
 # get random density
 tau = (np.random.rand(N_source))
@@ -111,18 +112,18 @@ if reference:
             target = np.row_stack([rx, ry])
             dumb_targ = np.row_stack([np.array([0.6, 0.6]), np.array([0.5, 0.5])])
             st = time.time()
-            out = pyfmmlib2d.RFMM(source, dumb_targ, charge=tau, compute_target_potential=True)
+            out = pyfmmlib2d.RFMM(source, dumb_targ, charge=tau, compute_target_potential=True, precision=reference_precision)
             tform = time.time() - st
             print('FMMLIB generation took:               {:0.1f}'.format(tform*1000))
             print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tform/cpu_num/1000), '\033[0m ')
             st = time.time()
-            out = pyfmmlib2d.RFMM(source, charge=tau, compute_source_potential=True)
+            out = pyfmmlib2d.RFMM(source, charge=tau, compute_source_potential=True, precision=reference_precision)
             self_reference_eval = -0.5*out['source']['u']/np.pi
             tt = time.time() - st - tform
             print('FMMLIB self only eval took:           {:0.1f}'.format(tt*1000))
             print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
             st = time.time()
-            out = pyfmmlib2d.RFMM(source, target, charge=tau, compute_target_potential=True)
+            out = pyfmmlib2d.RFMM(source, target, charge=tau, compute_target_potential=True, precision=reference_precision)
             target_reference_eval = -0.5*out['target']['u']/np.pi
             tt = time.time() - st - tform
             print('FMMLIB target only eval took:         {:0.1f}'.format(tt*1000))
@@ -133,9 +134,9 @@ if reference:
 
 # do my FMM (once first, to compile functions...)
 functions = flexmm2d.kifmm.get_functions(functions)
-functions = flexmm2d.fmm.get_functions(functions)
+functions = fmm.get_functions(functions)
 functions = flexmm2d.kifmm.wrap_functions(functions)
-FMM = flexmm2d.fmm.FMM(px[:20*N_cutoff], py[:20*N_cutoff], functions, Nequiv, N_cutoff)
+FMM = fmm.FMM(px[:20*N_cutoff], py[:20*N_cutoff], functions, Nequiv, N_cutoff)
 flexmm2d.kifmm.precompute(FMM, Nequiv)
 FMM.general_precomputations()
 FMM.build_expansions(tau)
@@ -143,25 +144,25 @@ _ = FMM.evaluate_to_points(px[:20*N_cutoff], py[:20*N_cutoff], True)
 
 st = time.time()
 print('')
-FMM = flexmm2d.fmm.FMM(px, py, functions, Nequiv, N_cutoff, bbox=bbox)
+FMM = fmm.FMM(px, py, functions, Nequiv, N_cutoff, bbox=bbox)
 flexmm2d.kifmm.precompute(FMM, Nequiv)
 FMM.general_precomputations()
-print('pyfmmlib2d precompute took:           {:0.1f}'.format((time.time()-st)*1000))
+print('flexmm2d precompute took:           {:0.1f}'.format((time.time()-st)*1000))
 st = time.time()
 FMM.build_expansions(tau)
 tt = (time.time()-st)
-print('pyfmmlib2d generation took:           {:0.1f}'.format(tt*1000))
+print('flexmm2d generation took:           {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
 st = time.time()
 self_fmm_eval = FMM.evaluate_to_points(px, py, True)
 tt = (time.time()-st)
-print('pyfmmlib2d source eval took:          {:0.1f}'.format(tt*1000))
+print('flexmm2d source eval took:          {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
 
 st = time.time()
 target_fmm_eval = FMM.evaluate_to_points(rx, ry)
 tt = (time.time()-st)
-print('pyfmmlib2d target eval took:          {:0.1f}'.format(tt*1000))
+print('flexmm2d target eval took:          {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_target/tt/cpu_num/1000), '\033[0m ')
 
 if reference:
@@ -171,3 +172,8 @@ if reference:
     target_err = np.abs(target_fmm_eval - target_reference_eval)/tscale
     print('\nMaximum difference, self:             {:0.2e}'.format(self_err.max()))
     print('Maximum difference, target:           {:0.2e}'.format(target_err.max()))
+
+
+import line_profiler
+%load_ext line_profiler
+%lprun -f FMM.build_expansions FMM.build_expansions(tau)
