@@ -3,9 +3,15 @@ import scipy as sp
 import numba
 import scipy.spatial
 
+"""
+Same as tree3, but getting rid of the separate arrays for
+the 'fake leaves', hopefully this cleans up the code a bit
+"""
+
+cacheit = False
 tree_search_crossover = 100
 
-@numba.njit()
+@numba.njit("(f8[:],f8[:],f8,f8,i8,i1[:],i8[4])", cache=cacheit)
 def classify(x, y, midx, midy, n, cl, ns):
     """
     Determine which 'class' each point belongs to in the current node
@@ -29,7 +35,7 @@ def classify(x, y, midx, midy, n, cl, ns):
         cla = 2*highx + highy
         cl[i] = cla
         ns[cla] += 1
-@numba.njit()
+@numba.njit("i1(i8,i8[4])", cache=cacheit)
 def get_target(i, nns):
     """
     Used in the reordering routine, determines which 'class' we
@@ -50,7 +56,7 @@ def get_target(i, nns):
     else:
         target = 3
     return target
-@numba.njit()
+@numba.njit(["(f8[:],i8,i8)", "(i1[:],i8,i8)", "(i8[:],i8,i8)"], cache=cacheit)
 def swap(x, i, j):
     """
     Inputs:
@@ -62,7 +68,7 @@ def swap(x, i, j):
     a = x[i]
     x[i] = x[j]
     x[j] = a
-@numba.njit()
+@numba.njit("i8[4](i8[4])", cache=cacheit)
 def get_inds(ns):
     """
     Compute cumulative sum of the number of points in each subnode
@@ -77,7 +83,7 @@ def get_inds(ns):
     for i in range(3):
         inds[i+1] = inds[i] + ns[i]
     return inds
-@numba.njit()
+@numba.njit("i8[4](f8[:],f8[:],i8[:],f8,f8)", cache=cacheit)
 def reorder_inplace(x, y, ordv, midx, midy):
     """
     This function plays an integral role in tree formation and does
@@ -119,7 +125,7 @@ def reorder_inplace(x, y, ordv, midx, midy):
                 keep_going = False
     return nns
 
-@numba.njit(parallel=True)
+@numba.njit("(f8[:],f8[:],i8[:],b1[:],f8,f8[:],f8[:],i8[:],i8[:],b1[:],f8[:],f8[:],i8[:],i8[:],i8[:],i8[:],i8,b1)", parallel=True, cache=cacheit)
 def divide_and_reorder(x, y, ordv, tosplit, half_width, xmid, ymid, bot_ind, \
                 top_ind, leaf, new_xmin, new_ymin, new_bot_ind,
                 new_top_ind, parent_ind, children_ind, children_start_ind, Xlist):
@@ -214,7 +220,7 @@ def get_new_level(level, x, y, ordv, ppl):
     keep_going = np.any(new_level.ns > ppl)
     return new_level, keep_going
 
-@numba.njit(parallel=True)
+@numba.njit("(f8[:],f8[:],i8[:,:],f8)", parallel=True, cache=cacheit)
 def numba_tag_colleagues(xmid, ymid, colleagues, dist):
     n = xmid.shape[0]
     dist2 = dist*dist
@@ -228,7 +234,7 @@ def numba_tag_colleagues(xmid, ymid, colleagues, dist):
                 colleagues[i,itrack] = j
                 itrack += 1
 
-@numba.njit(parallel=True)
+@numba.njit("f8[:],f8[:],f8,i8[:],i8[:,:],b1[:],i8[:],i8[:,:]", parallel=True, cache=cacheit)
 def numba_loop_colleagues(xmid, ymid, dist, parent_ind, ancestor_colleagues, 
                                 ancestor_leaf, ancestor_child_inds, colleagues):
     n = xmid.shape[0]
@@ -354,7 +360,7 @@ class Level(object):
     def add_null_Xlist(self):
         self.Xlist = np.zeros(self.n_node, dtype=bool)
 
-@numba.njit(parallel=True)
+@numba.njit("(i8[:],b1[:],i8[:],i8[:])", parallel=True, cache=cacheit)
 def numba_get_depths(depths, leaves, children_ind, descendant_depths):
     n = depths.shape[0]
     for i in numba.prange(n):
@@ -363,7 +369,7 @@ def numba_get_depths(depths, leaves, children_ind, descendant_depths):
             max_child_depth = np.max(child_depths)
             depths[i] = max_child_depth + 1
 
-@numba.njit(parallel=True)
+@numba.njit("(i8[:],i8[:,:],b1[:],b1[:])", parallel=True, cache=cacheit)
 def numba_get_bads(depths, colleagues, leaf, bads):
     n = depths.shape[0]
     for i in numba.prange(n):
@@ -377,7 +383,7 @@ def numba_get_bads(depths, colleagues, leaf, bads):
                         badi = True
             bads[i] = badi
 
-@numba.njit(parallel=True)
+@numba.njit("(i8[:],i8[:,:],b1[:],b1[:])", parallel=True, cache=cacheit)
 def numba_get_Xlist(depths, colleagues, leaf, Xlist):
     n = depths.shape[0]
     for i in numba.prange(n):
