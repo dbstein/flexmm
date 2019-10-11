@@ -16,6 +16,7 @@ def distribute(ucs, temp, pi, li, li2):
 def build_interaction_list(parents, pcoll, pchild, xmid, ymid, width, li, dilists):
     """
     Ahead of time interaction list preparation
+    This should probably be moved to the tree file
     """
     # loop over leaves in this level
     n = parents.size
@@ -211,18 +212,15 @@ class M2L_Evaluator(object):
                 self.M1 = A2*A1[:,None]
                 self._call = self._call_svd
                 self.cutoff = cutoff
-                # print(cutoff)
             else:
                 self._call = self._call_mat
-                # print('nocompress')
         else:
             self._call = self._call_null
     def _call_mat(self, tau, out, work):
         np.matmul(self.m2l, tau, out)
     def _call_svd(self, tau, out, work):
-        # work = np.empty([self.M1.shape[0], tau.shape[1]], dtype=tau.dtype)
         np.matmul(self.M1, tau, out=work)
-        np.matmul(self.M2, work, out=out) # this step seems annoyingly slow...
+        np.matmul(self.M2, work, out=out)
     def _call_null(self, tau, out, work):
         out[:] = 0.0
     def __call__(self, tau, out, work=None):

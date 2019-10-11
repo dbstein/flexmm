@@ -22,11 +22,8 @@ And gives error <5e-14
 """
 
 cpu_num = int(os.cpu_count()/2)
-numba.config.NUMBA_NUM_THREADS = cpu_num
-import mkl
-mkl.set_num_threads(cpu_num)
 
-# Laplace Kernel
+#Laplace Kernel
 @numba.njit(fastmath=True)
 def Laplace_Eval(sx, sy, tx, ty):
     dx = tx-sx
@@ -41,7 +38,7 @@ KA = functions['kernel_apply']
 KAS = functions['kernel_apply_self']
 
 N_source = 1000*1000
-N_target = 1000*1000*10
+N_target = 1000*1000
 test = 'circle' # clustered or circle or uniform
 reference_precision = 4
 
@@ -172,8 +169,3 @@ if reference:
     target_err = np.abs(target_fmm_eval - target_reference_eval)/tscale
     print('\nMaximum difference, self:             {:0.2e}'.format(self_err.max()))
     print('Maximum difference, target:           {:0.2e}'.format(target_err.max()))
-
-
-import line_profiler
-%load_ext line_profiler
-%lprun -f FMM.build_expansions FMM.build_expansions(tau)

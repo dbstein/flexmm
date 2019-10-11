@@ -17,8 +17,10 @@ def get_functions(Kernel_Eval):
     @numba.njit(parallel=True, fastmath=True)
     def kernel_add(sx, sy, tx, ty, tau, out):
         for j in numba.prange(tx.size):
+            outj = 0.0
             for i in range(sx.size):
-                out[j] += Kernel_Eval(sx[i], sy[i], tx[j], ty[j])*tau[i]
+                outj += Kernel_Eval(sx[i], sy[i], tx[j], ty[j])*tau[i]
+            out[j] = outj
 
     @numba.njit(fastmath=True)
     def kernel_apply_single(sx, sy, tx, ty, tau):
