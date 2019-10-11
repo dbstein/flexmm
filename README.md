@@ -11,29 +11,26 @@ Some timings for the Laplace KIFMM (with 60 equivalent source points, good to ab
 ### Random source points on a circle, target points in a grid:
 
 |                 | flexmm | fmmlib2d |
---------------------------------------
+|-----------------|--------|----------|
 | form multipoles | 558    | 469      |
 | source eval     | 496    | 908      |
 | target eval     | 2218   | 780      |
----------------------------------------
 
 ### Random clusters of source points, target points in a grid:
 
 |                 | flexmm | fmmlib2d |
---------------------------------------
+|-----------------|--------|----------|
 | form multipoles | 858    | 348      |
 | source eval     | 442    | 166      |
 | target eval     | 2291   | 831      |
----------------------------------------
 
 ### Uniformly random source points, target points in a grid:
 
 |                 | flexmm | fmmlib2d |
---------------------------------------
+|-----------------|--------|----------|
 | form multipoles | 947    | 422      |
 | source eval     | 417    | 203      |
 | target eval     | 414    | 156      |
----------------------------------------
 
 Right now, some functions don't get inlined.  Numba has an update in the works that supports specifying which functions to always inline (at the level of the Numba IR). I suspect that once this is an option, these timings will improve somewhat (at the cost of increased compile times). This should be particularly noticabel if you are running with a kernel that is complicated enough that LLVM decides not to inline it through its automated heuristics.
 
