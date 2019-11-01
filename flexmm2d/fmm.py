@@ -277,7 +277,7 @@ class FMM(object):
         self.reshaped_multipoles = [None,]*tree.levels
         # upwards pass - start at bottom leaf nodes and build multipoles up
         st = time.time()
-        for ind in reversed(range(tree.levels)[1:]):
+        for ind in reversed(range(tree.levels)[2:]):
             Level = tree.Levels[ind]
             # allocate space for the partial multipoles
             anum = Level.n_allocate_density
@@ -316,6 +316,7 @@ class FMM(object):
             # build the interaction lists
             dilists = np.empty([7, 7, Level.n_node], dtype=int)
             build_interaction_list(Level.parent_ind, Parent_Level.colleagues, Parent_Level.children_ind, Level.xmid, Level.ymid, Level.width, Level.this_density_ind, dilists)
+            # add up interactions
             work = np.empty([largest_cutoff, self.multipoles[ind].shape[0]], dtype=tau.dtype)
             for i in range(7):
                 for j in range(7):

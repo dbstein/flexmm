@@ -37,8 +37,8 @@ KF = functions['kernel_form']
 KA = functions['kernel_apply']
 KAS = functions['kernel_apply_self']
 
-N_source = 1000*1000
-N_target = 1000*1000
+N_source = 1000*20
+N_target = 1000*20
 test = 'circle' # clustered or circle or uniform
 reference_precision = 4
 
@@ -77,7 +77,7 @@ else:
 # maximum number of points in each leaf of tree for FMM
 N_cutoff = 200
 # number of modes in source/check surfaces
-Nequiv = 60
+Nequiv = 30
 
 # get random density
 tau = (np.random.rand(N_source))
@@ -133,6 +133,7 @@ if reference:
 functions = flexmm2d.kifmm.get_functions(functions)
 functions = fmm.get_functions(functions)
 functions = flexmm2d.kifmm.wrap_functions(functions)
+
 FMM = fmm.FMM(px[:20*N_cutoff], py[:20*N_cutoff], functions, Nequiv, N_cutoff)
 flexmm2d.kifmm.precompute(FMM, Nequiv)
 FMM.general_precomputations()
@@ -144,22 +145,22 @@ print('')
 FMM = fmm.FMM(px, py, functions, Nequiv, N_cutoff, bbox=bbox)
 flexmm2d.kifmm.precompute(FMM, Nequiv)
 FMM.general_precomputations()
-print('flexmm2d precompute took:           {:0.1f}'.format((time.time()-st)*1000))
+print('flexmm2d precompute took:             {:0.1f}'.format((time.time()-st)*1000))
 st = time.time()
 FMM.build_expansions(tau)
 tt = (time.time()-st)
-print('flexmm2d generation took:           {:0.1f}'.format(tt*1000))
+print('flexmm2d generation took:             {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
 st = time.time()
 self_fmm_eval = FMM.evaluate_to_points(px, py, True)
 tt = (time.time()-st)
-print('flexmm2d source eval took:          {:0.1f}'.format(tt*1000))
+print('flexmm2d source eval took:            {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
 
 st = time.time()
 target_fmm_eval = FMM.evaluate_to_points(rx, ry)
 tt = (time.time()-st)
-print('flexmm2d target eval took:          {:0.1f}'.format(tt*1000))
+print('flexmm2d target eval took:            {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_target/tt/cpu_num/1000), '\033[0m ')
 
 if reference:

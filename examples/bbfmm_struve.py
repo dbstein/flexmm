@@ -67,7 +67,7 @@ bbox = [-10, 110, -10, 110]
 # maximum number of points in each leaf of tree for FMM
 N_cutoff = 30
 # number of modes in Chebyshev expansions
-p = 20
+p = 10
 Nequiv = p**2
 
 # get random density
