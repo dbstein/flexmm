@@ -22,25 +22,6 @@ def BBFMM(x, y, functions, tau, p=10, Ncutoff=50, iscomplex=False, bbox=None, ve
     fmm.build_expansions(tau)
     return fmm
 
-def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None, mdtype=float):
-    if tx is None or ty is None:
-        tx = sx
-        ty = sy
-        isself = True
-    else:
-        if sx is tx and sy is ty:
-            isself = True
-        else:
-            isself = False
-    ns = sx.shape[0]
-    nt = tx.shape[0]
-    if out is None:
-        out = np.empty((nt, ns), dtype=mdtype)
-    KF(sx, sy, tx, ty, out)
-    if isself:
-        np.fill_diagonal(out, 0.0)
-    return out
-
 def wrap_functions(functions):
 
     upwards_pass               = functions['upwards_pass']
@@ -64,7 +45,6 @@ def wrap_functions(functions):
 
 def get_functions(functions):
 
-    kernel_add                = functions['kernel_add']
     kernel_apply_single       = functions['kernel_apply_single']
 
     ############################################################################
@@ -90,6 +70,20 @@ def get_functions(functions):
         for i in range(p):
             w1[i] = chebeval1(x, c[:,i])
         return chebeval1(y, w1)
+    @numba.njit(fastmath=True)
+    def chebeval2d_dx(x, y, c):
+        p = c.shape[0]
+        w1 = np.empty(p, c.dtype)
+        for i in range(p):
+            w1[i] = chebeval_d1(x, c[:,i])
+        return chebeval1(y, w1)
+    @numba.njit(fastmath=True)
+    def chebeval2d_dy(x, y, c):
+        p = c.shape[0]
+        w1 = np.empty(p, c.dtype)
+        for i in range(p):
+            w1[i] = chebeval1(x, c[:,i])
+        return chebeval_d1(y, w1)
     @numba.njit(parallel=True, fastmath=True)
     def all_chebt(p, x):
         out = np.empty((x.size, p))
@@ -122,6 +116,23 @@ def get_functions(functions):
             c0 = c[-i] - c1
             c1 = tmp + c1*x2
         return c0 + c1*x
+    @numba.njit(fastmath=True)
+    def chebeval_d1(x, c):
+        x2 = 2*x
+        c0 = c[-2] + x2*c[-1]
+        c1 = c[-1]
+        d0 = 2*c[-1]
+        d1 = 0.0
+        for i in range(3, len(c)):
+            # recursion for d
+            dm = 2*c0 + x2*d0 - d1
+            d1 = d0
+            d0 = dm
+            # recursion for c
+            cm = c[-i] + x2*c0 - c1
+            c1 = c0
+            c0 = cm
+        return c0 + x*d0 - d1
 
     ############################################################################
     # These functions DEPEND on the particular FMM implementation
@@ -212,7 +223,7 @@ def precompute(fmm, p):
                     snodey = nodey*0.5*widths[ind]
                     translated_snodex = snodex + (indx-3)*widths[ind]
                     translated_snodey = snodey + (indy-3)*widths[ind]
-                    W1 = Kernel_Form(KF, translated_snodex, translated_snodey, snodex, snodey, mdtype=fmm.dtype)
+                    W1 = KF(translated_snodex, translated_snodey, snodex, snodey, mdtype=fmm.dtype)
                     M2Lhere[indx,indy] = VI.dot(W1).dot(VI.T)
         M2LS.append(M2Lhere)
 

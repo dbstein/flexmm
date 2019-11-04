@@ -7,25 +7,6 @@ import scipy.linalg
 Define necessary functions and precomputations for KI-Style FMM
 """
 
-def Kernel_Form(KF, sx, sy, tx=None, ty=None, out=None, mdtype=float):
-    if tx is None or ty is None:
-        tx = sx
-        ty = sy
-        isself = True
-    else:
-        if sx is tx and sy is ty:
-            isself = True
-        else:
-            isself = False
-    ns = sx.shape[0]
-    nt = tx.shape[0]
-    if out is None:
-        out = np.empty((nt, ns), dtype=mdtype)
-    KF(sx, sy, tx, ty, out)
-    if isself:
-        np.fill_diagonal(out, 0.0)
-    return out
-
 def wrap_functions(functions):
 
     upwards_pass               = functions['upwards_pass']
@@ -43,13 +24,27 @@ def wrap_functions(functions):
         'wrapped_upwards_pass'               : wrapped_upwards_pass,
         'wrapped_local_expansion_evaluation' : wrapped_local_expansion_evaluation,
     }
-
     functions.update(new_functions)
+
+    # if gradient functions exist, wrap these up...
+    if 'kernel_gradient_apply_single' in functions.keys():
+
+        local_expansion_gradient_evaluation = functions['local_expansion_gradient_evaluation']
+
+        def wrapped_local_expansion_gradient_evaluation(x, y, inds, locs, xmids, ymids, Local_Expansions, pot, potx, poty, precomputations):
+            local_expansion_gradient_evaluation(x, y, inds, locs, xmids, ymids, Local_Expansions, pot, potx, poty, \
+                    precomputations['large_xs'], precomputations['large_ys'])
+
+        new_functions = {
+            'wrapped_local_expansion_gradient_evaluation' : wrapped_local_expansion_gradient_evaluation,
+        }
+        functions.update(new_functions)
+
     return functions
 
 def get_functions(functions):
 
-    kernel_add                = functions['kernel_add']
+    kernel_apply              = functions['kernel_apply']
     kernel_apply_single       = functions['kernel_apply_single']
 
     ############################################################################
@@ -57,7 +52,7 @@ def get_functions(functions):
 
     @numba.njit(fastmath=True)
     def source_to_partial_multipole(sx, sy, tau, ucheck, cx, cy):
-        kernel_add(sx, sy, cx, cy, tau, ucheck)
+        kernel_apply(sx, sy, cx, cy, tau, ucheck)
 
     def partial_multipole_to_multipole(pM, precomputations, ind):
         return sp.linalg.lu_solve(precomputations['E2C_LUs'][ind], pM.T, overwrite_b=True, check_finite=False).T
@@ -69,9 +64,6 @@ def get_functions(functions):
     def local_expansion_to_target(expansion, tx, ty, sx, sy):
         return kernel_apply_single(sx, sy, tx, ty, expansion)
 
-    ############################################################################
-    # These functions DO NOT DEPEND on the particular FMM implementation
-
     new_functions = {
         'partial_multipole_to_multipole' : partial_multipole_to_multipole,
         'partial_local_to_local'         : partial_local_to_local,
@@ -79,6 +71,20 @@ def get_functions(functions):
         'local_expansion_to_target'      : local_expansion_to_target,
     }
     functions.update(new_functions)
+
+    # if gradient functions exist, wrap these up...
+    if 'kernel_gradient_apply_single' in functions.keys():
+
+        kernel_gradient_apply_single       = functions['kernel_gradient_apply_single']
+
+        @numba.njit(fastmath=True)
+        def local_expansion_gradient_to_target(expansion, tx, ty, sx, sy):
+            return kernel_gradient_apply_single(sx, sy, tx, ty, expansion)
+
+        new_functions = {
+            'local_expansion_gradient_to_target' : local_expansion_gradient_to_target,
+        }
+        functions.update(new_functions)
 
     return functions
 
@@ -129,7 +135,7 @@ def precompute(fmm, Nequiv):
     # get C2E (check solution to equivalent density) operator for each level
     E2C_LUs = []
     for ind in range(tree.levels):
-        equiv_to_check = Kernel_Form(KF, small_xs[ind], small_ys[ind], \
+        equiv_to_check = KF(small_xs[ind], small_ys[ind], \
                                                 large_xs[ind], large_ys[ind], mdtype=fmm.dtype)
         E2C_LUs.append(sp.linalg.lu_factor(equiv_to_check, overwrite_a=True, check_finite=False))
     # get Collected Equivalent Coordinates for each level
@@ -147,8 +153,8 @@ def precompute(fmm, Nequiv):
                 small_ys[ind+1] - 0.5*widths[ind+1],
                 small_ys[ind+1] + 0.5*widths[ind+1],
             ])
-        Kern = Kernel_Form(KF, collected_equiv_xs, collected_equiv_ys, \
-                                            large_xs[ind], large_ys[ind], mdtype=fmm.dtype)
+        Kern = KF(collected_equiv_xs, collected_equiv_ys, \
+                                            large_xs[ind], large_ys[ind], mdtype=fmm.dtype)        
         M2MC.append(Kern)
     # get L2LC operator
     L2LC = [A.T for A in M2MC]
@@ -164,7 +170,7 @@ def precompute(fmm, Nequiv):
                 else:
                     small_xhere = small_xs[ind] + (indx - 3)*widths[ind]
                     small_yhere = small_ys[ind] + (indy - 3)*widths[ind]
-                    M2Lhere[indx,indy] = Kernel_Form(KF, small_xhere, \
+                    M2Lhere[indx,indy] = KF(small_xhere, \
                                             small_yhere, small_xs[ind], small_ys[ind], mdtype=fmm.dtype)
         M2LS.append(M2Lhere)
 
