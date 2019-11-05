@@ -2,45 +2,11 @@ import numpy as np
 import numba
 import scipy as sp
 import scipy.linalg
+from .precomputations import Precomputation, Precomputations
 
 """
 Define necessary functions and precomputations for KI-Style FMM
 """
-
-def wrap_functions(functions):
-
-    upwards_pass               = functions['upwards_pass']
-    local_expansion_evaluation = functions['local_expansion_evaluation']
-
-    def wrapped_upwards_pass(x, y, li, cu, bind, tind, xmid, ymid, tau, pM, precomputations, ind):
-        upwards_pass(x, y, li, cu, bind, tind, xmid, ymid, tau, pM, \
-                precomputations['large_xs'][ind], precomputations['large_ys'][ind])
-
-    def wrapped_local_expansion_evaluation(x, y, inds, locs, xmids, ymids, Local_Expansions, pot, precomputations):
-        local_expansion_evaluation(x, y, inds, locs, xmids, ymids, Local_Expansions, pot, \
-                precomputations['large_xs'], precomputations['large_ys'])
-
-    new_functions = {
-        'wrapped_upwards_pass'               : wrapped_upwards_pass,
-        'wrapped_local_expansion_evaluation' : wrapped_local_expansion_evaluation,
-    }
-    functions.update(new_functions)
-
-    # if gradient functions exist, wrap these up...
-    if 'kernel_gradient_apply_single' in functions.keys():
-
-        local_expansion_gradient_evaluation = functions['local_expansion_gradient_evaluation']
-
-        def wrapped_local_expansion_gradient_evaluation(x, y, inds, locs, xmids, ymids, Local_Expansions, pot, potx, poty, precomputations):
-            local_expansion_gradient_evaluation(x, y, inds, locs, xmids, ymids, Local_Expansions, pot, potx, poty, \
-                    precomputations['large_xs'], precomputations['large_ys'])
-
-        new_functions = {
-            'wrapped_local_expansion_gradient_evaluation' : wrapped_local_expansion_gradient_evaluation,
-        }
-        functions.update(new_functions)
-
-    return functions
 
 def get_functions(functions):
 
@@ -54,11 +20,11 @@ def get_functions(functions):
     def source_to_partial_multipole(sx, sy, tau, ucheck, cx, cy):
         kernel_apply(sx, sy, cx, cy, tau, ucheck)
 
-    def partial_multipole_to_multipole(pM, precomputations, ind):
-        return sp.linalg.lu_solve(precomputations['E2C_LUs'][ind], pM.T, overwrite_b=True, check_finite=False).T
+    def partial_multipole_to_multipole(pM, LU):
+        return sp.linalg.lu_solve(LU, pM.T, overwrite_b=True, check_finite=False).T
 
-    def partial_local_to_local(pL, precomputations, ind):
-        return sp.linalg.lu_solve(precomputations['E2C_LUs'][ind], pL.T, overwrite_b=True, check_finite=False).T
+    def partial_local_to_local(pL, LU):
+        return sp.linalg.lu_solve(LU, pL.T, overwrite_b=True, check_finite=False).T
 
     @numba.njit(fastmath=True)
     def local_expansion_to_target(expansion, tx, ty, sx, sy):
@@ -100,87 +66,82 @@ def get_level_information(node_width, theta, N):
     return small_surface_x_base, small_surface_y_base, large_surface_x_base, \
                 large_surface_y_base, r1, r2
 
-def precompute(fmm, Nequiv):
-    """
-    Precomputations for KI-Style FMM
-    kwargs:
-        required:
-            Nequiv: int, number of points used in equivalent surfaces
-    """
-    tree = fmm.tree
-    Ncutoff = fmm.Ncutoff
-    KF = fmm.functions['kernel_form']
+class KI_Precomputations(Precomputations):
+    def __init__(self, fmm, precomputations=None):
+        super().__init__(precomputations)
+        self.prepare(fmm)
+    def prepare(self, fmm):
+        tree = fmm.tree
+        self.small_xs = []
+        self.small_ys = []
+        self.large_xs = []
+        self.large_ys = []        
+        for Level in tree.Levels:
+            width = Level.width
+            if not self.has_precomputation(width):
+                precomp = KI_Precomputation(width, fmm)
+                self.add_precomputation(precomp)
+            precomp = self[width]
+            self.small_xs.append(precomp.small_x)
+            self.small_ys.append(precomp.small_y)
+            self.large_xs.append(precomp.large_x)
+            self.large_ys.append(precomp.large_y)
+    def get_local_expansion_extras(self):
+        return self.large_xs, self.large_ys
 
-    # generate the effective surfaces for each level
-    theta = np.linspace(0, 2*np.pi, Nequiv, endpoint=False)
-    small_xs = []
-    small_ys = []
-    large_xs = []
-    large_ys = []
-    small_radii = []
-    large_radii = []
-    widths = []
-    for ind in range(tree.levels):
-        Level = tree.Levels[ind]
-        width = Level.width
-        small_x, small_y, large_x, large_y, small_radius, large_radius = \
-                                            get_level_information(width, theta, Nequiv)
-        small_xs.append(small_x)
-        small_ys.append(small_y)
-        large_xs.append(large_x)
-        large_ys.append(large_y)
-        small_radii.append(small_radius)
-        large_radii.append(large_radius)
-        widths.append(width)
-    # get C2E (check solution to equivalent density) operator for each level
-    E2C_LUs = []
-    for ind in range(tree.levels):
-        equiv_to_check = KF(small_xs[ind], small_ys[ind], \
-                                                large_xs[ind], large_ys[ind], mdtype=fmm.dtype)
-        E2C_LUs.append(sp.linalg.lu_factor(equiv_to_check, overwrite_a=True, check_finite=False))
-    # get Collected Equivalent Coordinates for each level
-    M2MC = []
-    for ind in range(tree.levels-1):
-        collected_equiv_xs = np.concatenate([
-                small_xs[ind+1] - 0.5*widths[ind+1],
-                small_xs[ind+1] - 0.5*widths[ind+1],
-                small_xs[ind+1] + 0.5*widths[ind+1],
-                small_xs[ind+1] + 0.5*widths[ind+1],
+class KI_Precomputation(Precomputation):
+    def __init__(self, width, fmm):
+        super().__init__(width)
+        self.precompute(fmm)
+        self.compress()
+    def precompute(self, fmm):
+        width = self.width
+        Nequiv = fmm.Nequiv
+        KF = fmm.functions['kernel_form']
+        dtype = fmm.dtype
+        theta = np.linspace(0, 2*np.pi, Nequiv, endpoint=False)
+        sx, sy, lx, ly, sr, lr = get_level_information(width, theta, Nequiv)
+        small_to_large = KF(sx, sy, lx, ly, mdtype=dtype)
+        self.S2L_LU = sp.linalg.lu_factor(small_to_large, overwrite_a=True, check_finite=False)
+        large_to_small = KF(sx, sy, lx, ly, mdtype=dtype)
+        self.L2S_LU = sp.linalg.lu_factor(large_to_small, overwrite_a=True, check_finite=False)
+        # get Collected Equivalent Coordinates for the smaller level
+        ssx, ssy, _, _, _, _ = get_level_information(0.5*width, theta, Nequiv)
+        cexs = np.concatenate([
+                ssx - 0.25*width,
+                ssx - 0.25*width,
+                ssx + 0.25*width,
+                ssx + 0.25*width,
             ])
-        collected_equiv_ys = np.concatenate([
-                small_ys[ind+1] - 0.5*widths[ind+1],
-                small_ys[ind+1] + 0.5*widths[ind+1],
-                small_ys[ind+1] - 0.5*widths[ind+1],
-                small_ys[ind+1] + 0.5*widths[ind+1],
+        ceys = np.concatenate([
+                ssy - 0.25*width,
+                ssy + 0.25*width,
+                ssy - 0.25*width,
+                ssy + 0.25*width,
             ])
-        Kern = KF(collected_equiv_xs, collected_equiv_ys, \
-                                            large_xs[ind], large_ys[ind], mdtype=fmm.dtype)        
-        M2MC.append(Kern)
-    # get L2LC operator
-    L2LC = [A.T for A in M2MC]
-    # get all required M2L translations
-    M2LS = []
-    M2LS.append(None)
-    for ind in range(1, tree.levels):
-        M2Lhere = np.empty([7,7], dtype=object)
+        # get M2MC operator
+        self.M2MC = KF(cexs, ceys, lx, ly, mdtype=dtype)
+        # get L2LC operator
+        self.L2LC = self.M2MC.T
+        # get all required M2L translations
+        M2L = np.empty([7,7], dtype=object)
         for indx in range(7):
             for indy in range(7):
                 if indx-3 in [-1, 0, 1] and indy-3 in [-1, 0, 1]:
-                    M2Lhere[indx, indy] = None
+                    M2L[indx, indy] = None
                 else:
-                    small_xhere = small_xs[ind] + (indx - 3)*widths[ind]
-                    small_yhere = small_ys[ind] + (indy - 3)*widths[ind]
-                    M2Lhere[indx,indy] = KF(small_xhere, \
-                                            small_yhere, small_xs[ind], small_ys[ind], mdtype=fmm.dtype)
-        M2LS.append(M2Lhere)
-
-    precomputations = {
-        'M2MC'     : M2MC,
-        'L2LC'     : L2LC,
-        'M2LS'     : M2LS,
-        'large_xs' : large_xs,
-        'large_ys' : large_ys,
-        'E2C_LUs'  : E2C_LUs,
-    }
-
-    fmm.precomputations = precomputations
+                    sx_here = sx + (indx - 3)*width
+                    sy_here = sy + (indy - 3)*width
+                    M2L[indx,indy] = KF(sx_here, sy_here, sx, sy, mdtype=dtype)
+        self.M2L = M2L
+        # stow away some other things
+        self.small_x = sx
+        self.small_y = sy
+        self.large_x = lx
+        self.large_y = ly
+    def get_upwards_extras(self):
+        return self.large_x, self.large_y
+    def get_partial_multipole_to_multipole_extra(self):
+        return self.S2L_LU
+    def get_partial_local_to_local_extra(self):
+        return self.L2S_LU

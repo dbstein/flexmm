@@ -263,36 +263,6 @@ def get_functions(functions):
 
     return functions
 
-class M2L_Evaluator(object):
-    def __init__(self, m2l, svd_tol):
-        self.m2l = m2l
-        self.svd_tol = svd_tol
-        S = np.linalg.svd(self.m2l)
-        cuts = np.where(S[1] > svd_tol)[0]
-        if len(cuts) > 0:
-            cutoff = np.where(S[1] > svd_tol)[0][-1] + 1
-            # if this is the case, svd compression probably saves time
-            if 2*cutoff < m2l.shape[0]:
-                self.M2 = S[0][:,:cutoff].copy()
-                A1 = S[1][:cutoff]
-                A2 = S[2][:cutoff]
-                self.M1 = A2*A1[:,None]
-                self._call = self._call_svd
-                self.cutoff = cutoff
-            else:
-                self._call = self._call_mat
-        else:
-            self._call = self._call_null
-    def _call_mat(self, tau, out, work):
-        np.matmul(self.m2l, tau, out)
-    def _call_svd(self, tau, out, work):
-        np.matmul(self.M1, tau, out=work)
-        np.matmul(self.M2, work, out=out)
-    def _call_null(self, tau, out, work):
-        out[:] = 0.0
-    def __call__(self, tau, out, work=None):
-        self._call(tau, out, work)
-
 class FMM(object):
     def __init__(self, x, y, functions, Nequiv=48, Ncutoff=50, iscomplex=False, bbox=None, verbose=False):
         self.x = x
@@ -310,31 +280,15 @@ class FMM(object):
         self.tree = Tree(self.x, self.y, self.Ncutoff, self.bbox)
         tree_formation_time = (time.time() - st)*1000
         self.print('....Tree formed in:             {:0.1f}'.format(tree_formation_time))
-    def general_precomputations(self, svd_tol=1e-12):
-        # build SVD compression
-        M2LS = self.precomputations['M2LS']
-        M2LFS = [None,]
-        for ind in range(1, self.tree.levels):
-            M2LF = np.empty([7,7], dtype=object)
-            M2L = M2LS[ind]
-            for i in range(7):
-                for j in range(7):
-                    if not (i in [2,3,4] and j in [2,3,4]):
-                        M2LF[i,j] = M2L_Evaluator(M2L[i,j], svd_tol)
-            M2LFS.append(M2LF)
-        self.precomputations['M2LFS'] = M2LFS
+    def load_precomputations(self, precomputations):
+        self.Precomputations = precomputations
     def build_expansions(self, tau):
         functions = self.functions
         tree = self.tree
-        precomputations = self.precomputations
-        M2MC = precomputations['M2MC']
-        L2LC = precomputations['L2LC']
-        M2LS = precomputations['M2LS']
-        M2LFS = precomputations['M2LFS']
 
         partial_multipole_to_multipole = functions['partial_multipole_to_multipole']
         partial_local_to_local = functions['partial_local_to_local']
-        upwards_pass = functions['wrapped_upwards_pass']
+        upwards_pass = functions['upwards_pass']
         Nequiv, Ncutoff = self.Nequiv, self.Ncutoff
         
         tau_ordered = tau[tree.ordv]
@@ -346,6 +300,9 @@ class FMM(object):
         st = time.time()
         for ind in reversed(range(tree.levels)[2:]):
             Level = tree.Levels[ind]
+            width = Level.width
+            prec = self.Precomputations[width]
+            M2MC = prec.M2MC
             # allocate space for the partial multipoles
             anum = Level.n_allocate_density
             partial_multipole = np.zeros([anum, Nequiv], dtype=self.dtype)
@@ -353,10 +310,12 @@ class FMM(object):
             # check if there is a level below us, if there is, lift all its expansions
             if ind != tree.levels-1:
                 ancestor_level = tree.Levels[ind+1]
-                temp1 = M2MC[ind].dot(self.reshaped_multipoles[ind+1].T).T
+                temp1 = M2MC.dot(self.reshaped_multipoles[ind+1].T).T
                 distribute(partial_multipole, temp1, ancestor_level.short_parent_ind, ancestor_level.parent_density_ind, Level.this_density_ind)
-            upwards_pass(tree.x, tree.y, Level.this_density_ind, Level.compute_upwards, Level.bot_ind, Level.top_ind, Level.xmid, Level.ymid, tau_ordered, partial_multipole, precomputations, ind)
-            self.multipoles[ind] = partial_multipole_to_multipole(partial_multipole, precomputations, ind)
+            e1, e2 = prec.get_upwards_extras()
+            upwards_pass(tree.x, tree.y, Level.this_density_ind, Level.compute_upwards, Level.bot_ind, Level.top_ind, Level.xmid, Level.ymid, tau_ordered, partial_multipole, e1, e2)
+            e1 = prec.get_partial_multipole_to_multipole_extra()
+            self.multipoles[ind] = partial_multipole_to_multipole(partial_multipole, e1)
             resh = (int(anum/4), int(Nequiv*4))
             self.reshaped_multipoles[ind] = np.reshape(self.multipoles[ind], resh)
             if self.reshaped_multipoles[ind].flags.owndata:
@@ -371,6 +330,10 @@ class FMM(object):
         self.Local_Expansions[1] = np.zeros([4, Nequiv], dtype=self.dtype)
         for ind in range(2, tree.levels):
             Level = tree.Levels[ind]
+            width = Level.width
+            prec = self.Precomputations[width]
+            L2LC = prec.L2LC
+            M2LF = prec.M2LF
             Parent_Level = tree.Levels[ind-1]
             if ind == 2:
                 self.Partial_Local_Expansions[ind] = np.zeros([16, Nequiv], dtype=self.dtype)
@@ -378,8 +341,8 @@ class FMM(object):
             largest_cutoff = 0
             for i in range(7):
                 for j in range(7):
-                    if hasattr(M2LFS[ind][i,j], 'cutoff'):
-                        largest_cutoff = max(largest_cutoff, M2LFS[ind][i,j].cutoff)
+                    if hasattr(M2LF[i,j], 'cutoff'):
+                        largest_cutoff = max(largest_cutoff, M2LF[i,j].cutoff)
             # build the interaction lists
             dilists = np.empty([7, 7, Level.n_node], dtype=int)
             build_interaction_list(Level.parent_ind, Parent_Level.colleagues, Parent_Level.children_ind, Level.xmid, Level.ymid, Level.width, Level.this_density_ind, dilists)
@@ -388,17 +351,18 @@ class FMM(object):
             for i in range(7):
                 for j in range(7):
                     if not (i in [2,3,4] and j in [2,3,4]):
-                        workmat = work[:M2LFS[ind][i,j].cutoff] if hasattr(M2LFS[ind][i,j], 'cutoff') else None
-                        M2LFS[ind][i,j](self.multipoles[ind].T, out=M2Ls.T, work=workmat)
+                        workmat = work[:M2LF[i,j].cutoff] if hasattr(M2LF[i,j], 'cutoff') else None
+                        M2LF[i,j](self.multipoles[ind].T, out=M2Ls.T, work=workmat)
                         add_interactions_prepared(M2Ls, self.Partial_Local_Expansions[ind], dilists[i,j], Nequiv)
             # convert partial local expansions to local local_expansions
-            self.Local_Expansions[ind] = partial_local_to_local(self.Partial_Local_Expansions[ind], precomputations, ind)
+            e1 = prec.get_partial_local_to_local_extra()
+            self.Local_Expansions[ind] = partial_local_to_local(self.Partial_Local_Expansions[ind], e1)
             # move local expansions downwards
             if ind < tree.levels-1:
                 doit = Level.compute_downwards
                 descendant_level = tree.Levels[ind+1]
                 local_expansions = self.Local_Expansions[ind][doit]
-                partial_local_expansions = L2LC[ind].dot(local_expansions.T).T
+                partial_local_expansions = L2LC.dot(local_expansions.T).T
                 sorter = np.argsort(Level.children_ind[doit])
                 self.Partial_Local_Expansions[ind+1] = partial_local_expansions[sorter].reshape([descendant_level.n_node, Nequiv])
         et = time.time()
@@ -406,10 +370,10 @@ class FMM(object):
 
     def evaluate_to_points(self, x,  y, check_self=False):
         functions = self.functions
-        precomputations = self.precomputations
+        prec = self.Precomputations
         tree = self.tree
 
-        local_expansion_evaluation = functions['wrapped_local_expansion_evaluation']
+        local_expansion_evaluation = functions['local_expansion_evaluation']
         neighbor_evaluation = functions['neighbor_evaluation']
 
         # get level ind, level loc for the point (x, y)
@@ -417,17 +381,18 @@ class FMM(object):
         # evaluate local expansions
         pot = np.zeros(x.size, dtype=self.dtype)
         Local_Expansions = self.Local_Expansions
-        local_expansion_evaluation(x, y, inds, locs, tree.xmids, tree.ymids, Local_Expansions, pot, precomputations)
+        e1, e2 = prec.get_local_expansion_extras()
+        local_expansion_evaluation(x, y, inds, locs, tree.xmids, tree.ymids, Local_Expansions, pot, e1, e2)
         # evaluate interactions from neighbor cells to (x, y)
         neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, tree.bot_inds, tree.top_inds, tree.colleagues, self.tau_ordered, pot, check_self)
         return pot
 
     def evaluate_gradient_to_points(self, x,  y, check_self=False):
         functions = self.functions
-        precomputations = self.precomputations
+        prec = self.Precomputations
         tree = self.tree
 
-        local_expansion_evaluation = functions['wrapped_local_expansion_gradient_evaluation']
+        local_expansion_evaluation = functions['local_expansion_gradient_evaluation']
         neighbor_evaluation = functions['neighbor_gradient_evaluation']
 
         # get level ind, level loc for the point (x, y)
@@ -437,7 +402,8 @@ class FMM(object):
         potx = np.zeros(x.size, dtype=self.dtype)
         poty = np.zeros(x.size, dtype=self.dtype)
         Local_Expansions = self.Local_Expansions
-        local_expansion_evaluation(x, y, inds, locs, tree.xmids, tree.ymids, Local_Expansions, pot, potx, poty, precomputations)
+        e1, e2 = prec.get_local_expansion_extras()
+        local_expansion_evaluation(x, y, inds, locs, tree.xmids, tree.ymids, Local_Expansions, pot, potx, poty, e1, e2)
         # evaluate interactions from neighbor cells to (x, y)
         neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, tree.bot_inds, tree.top_inds, tree.colleagues, self.tau_ordered, pot, potx, poty, check_self)
         return pot, potx, poty

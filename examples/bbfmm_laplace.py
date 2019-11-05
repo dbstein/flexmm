@@ -79,7 +79,7 @@ else:
 # maximum number of points in each leaf of tree for FMM
 N_cutoff = 50
 # number of modes in Chebyshev expansions
-p = 16
+p = 8
 Nequiv = p**2
 
 # get random density
@@ -135,18 +135,18 @@ if reference:
 # do my FMM (once first, to compile functions...)
 functions = flexmm2d.bbfmm.get_functions(functions)
 functions = fmm.get_functions(functions)
-functions = flexmm2d.bbfmm.wrap_functions(functions)
+# functions = flexmm2d.bbfmm.wrap_functions(functions)
 FMM = fmm.FMM(px[:20*N_cutoff], py[:20*N_cutoff], functions, Nequiv, N_cutoff)
-flexmm2d.bbfmm.precompute(FMM, p)
-FMM.general_precomputations()
+precomputations = flexmm2d.bbfmm.BB_Precomputations(FMM)
+FMM.load_precomputations(precomputations)
 FMM.build_expansions(tau)
 _ = FMM.evaluate_to_points(px[:20*N_cutoff], py[:20*N_cutoff], True)
 
 st = time.time()
 print('')
 FMM = fmm.FMM(px, py, functions, Nequiv, N_cutoff, bbox=bbox)
-flexmm2d.bbfmm.precompute(FMM, p)
-FMM.general_precomputations()
+precomputations = flexmm2d.bbfmm.BB_Precomputations(FMM)
+FMM.load_precomputations(precomputations)
 print('pyfmmlib2d precompute took:           {:0.1f}'.format((time.time()-st)*1000))
 st = time.time()
 FMM.build_expansions(tau)
@@ -172,3 +172,11 @@ if reference:
     target_err = np.abs(target_fmm_eval - target_reference_eval)/tscale
     print('\nMaximum difference, self:             {:0.2e}'.format(self_err.max()))
     print('Maximum difference, target:           {:0.2e}'.format(target_err.max()))
+
+print('\nRun precomputations once more to show how precomputations work')
+st = time.time()
+FMM = fmm.FMM(px, py, functions, Nequiv, N_cutoff, bbox=bbox)
+precomputations = flexmm2d.bbfmm.BB_Precomputations(FMM, precomputations)
+FMM.load_precomputations(precomputations)
+print('pyfmmlib2d precompute took:           {:0.1f}'.format((time.time()-st)*1000))
+
