@@ -1,4 +1,4 @@
-from kifmm2d.fmm import FMM as KI_FMM
+from kifmm2d.scalar.fmm import FMM as KI_FMM
 from kifmm2d.misc.utils import random2
 import numpy as np
 import numba

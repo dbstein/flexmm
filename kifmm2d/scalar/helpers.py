@@ -2,7 +2,7 @@ import numpy as np
 import numba
 import scipy as sp
 import scipy.linalg
-from .float_dict import FloatDict
+from ..float_dict import FloatDict
 
 def get_level_information(node_width, theta, N):
     # get information for this level

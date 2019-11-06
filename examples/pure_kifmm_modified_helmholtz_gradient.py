@@ -1,4 +1,4 @@
-from kifmm2d.fmm import FMM as KI_FMM
+from kifmm2d.scalar.fmm import FMM as KI_FMM
 from flexmm2d.misc.utils import random2
 import numpy as np
 import numba
@@ -42,14 +42,27 @@ def Eval(sx, sy, tx, ty):
 
 # Kernel
 @numba.njit(fastmath=True)
-def Gradient_Eval(sx, sy, tx, ty):
+def Gradient_Eval1(sx, sy, tx, ty, tau, extras):
     dx = tx-sx
     dy = ty-sy
     d = np.sqrt(dx**2 + dy**2)
     di = 1.0/d
     scale = 1.0/(2*np.pi)
-    u = _k0(helmholtz_k*d)*scale
-    k1 = -helmholtz_k*_k1(helmholtz_k*d)*scale/d
+    u = _k0(helmholtz_k*d)*scale*tau
+    k1 = -helmholtz_k*_k1(helmholtz_k*d)*scale/d*tau
+    ux = dx*k1
+    uy = dy*k1
+    return u, ux, uy
+
+@numba.njit(fastmath=True)
+def Gradient_Eval2(sx, sy, tx, ty, tau, extras):
+    dx = tx-sx
+    dy = ty-sy
+    d = np.sqrt(dx**2 + dy**2)
+    di = 1.0/d
+    scale = 1.0/(2*np.pi)
+    u = _k0(helmholtz_k*d)*scale*tau[0]
+    k1 = -helmholtz_k*_k1(helmholtz_k*d)*scale/d*tau[0]
     ux = dx*k1
     uy = dy*k1
     return u, ux, uy
@@ -57,7 +70,7 @@ def Gradient_Eval(sx, sy, tx, ty):
 N_source = 1000*10
 N_target = 1000*1000*1
 test = 'circle' # clustered or circle or uniform
-reference_precision = 4
+reference_precision = 1
 
 # construct some data to run FMM on
 if test == 'uniform':
@@ -92,9 +105,9 @@ else:
     raise Exception('Test is not defined')
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 100
+N_cutoff = 50
 # number of modes in source/check surfaces
-Nequiv = 60
+Nequiv = 20
 
 # get random density
 tau = (np.random.rand(N_source))
@@ -152,7 +165,7 @@ FMM = KI_FMM(px, py, Eval, N_cutoff, Nequiv)
 FMM.build_expansions(tau)
 _ = FMM.source_evaluation(px[:20*N_cutoff], py[:20*N_cutoff])
 _ = FMM.target_evaluation(rx[:20*N_cutoff], ry[:20*N_cutoff])
-FMM.register_evaluator(Gradient_Eval, 'gradient', 3)
+FMM.register_evaluator(Gradient_Eval1, Gradient_Eval2, 'gradient', 3)
 _ = FMM.evaluate_to_points(px[:20*N_cutoff], py[:20*N_cutoff], 'gradient', True)
 _ = FMM.evaluate_to_points(rx[:20*N_cutoff], ry[:20*N_cutoff], 'gradient', False)
 
