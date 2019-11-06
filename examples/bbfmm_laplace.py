@@ -1,7 +1,4 @@
-import flexmm2d
-import flexmm2d.kernel_functions
-import flexmm2d.fmm as fmm
-import flexmm2d.bbfmm
+from flexmm2d.bbfmm import BB_FMM
 from flexmm2d.misc.utils import random2
 import numpy as np
 import numba
@@ -34,12 +31,6 @@ def Laplace_Eval(sx, sy, tx, ty):
     d2 = dx**2 + dy**2
     return -np.log(d2)/(4*np.pi)
 
-# jit compile internal numba functions
-functions = flexmm2d.kernel_functions.get_functions(Laplace_Eval)
-KF = functions['kernel_form']
-KA = functions['kernel_apply']
-KAS = functions['kernel_apply_self']
-
 N_source = 1000*100
 N_target = 1000*100
 test = 'circle' # clustered or circle or uniform
@@ -68,19 +59,18 @@ elif test == 'clustered':
     bbox = [0,1,0,1]
 elif test == 'circle':
     rand_theta = np.random.rand(int(N_source))*2*np.pi
-    px = np.cos(rand_theta)*100
-    py = np.sin(rand_theta)*100
+    px = np.cos(rand_theta)
+    py = np.sin(rand_theta)
     rx = (np.random.rand(N_target)-0.5)*10
     ry = (np.random.rand(N_target)-0.5)*10
-    bbox = [-5,5,5,5]
+    bbox = [-5,5,-5,5]
 else:
     raise Exception('Test is not defined')
 
 # maximum number of points in each leaf of tree for FMM
 N_cutoff = 50
 # number of modes in Chebyshev expansions
-p = 8
-Nequiv = p**2
+p = 12
 
 # get random density
 tau = (np.random.rand(N_source))
@@ -132,37 +122,30 @@ if reference:
             print('')
             reference = False
 
-# do my FMM (once first, to compile functions...)
-functions = flexmm2d.bbfmm.get_functions(functions)
-functions = fmm.get_functions(functions)
-# functions = flexmm2d.bbfmm.wrap_functions(functions)
-FMM = fmm.FMM(px[:20*N_cutoff], py[:20*N_cutoff], functions, Nequiv, N_cutoff)
-precomputations = flexmm2d.bbfmm.BB_Precomputations(FMM)
-FMM.load_precomputations(precomputations)
+FMM = BB_FMM(px, py, Laplace_Eval, N_cutoff, p, bbox=bbox)
 FMM.build_expansions(tau)
-_ = FMM.evaluate_to_points(px[:20*N_cutoff], py[:20*N_cutoff], True)
+_ = FMM.source_evaluation(px[:20*N_cutoff], py[:20*N_cutoff])
+_ = FMM.target_evaluation(rx[:20*N_cutoff], ry[:20*N_cutoff])
 
 st = time.time()
 print('')
-FMM = fmm.FMM(px, py, functions, Nequiv, N_cutoff, bbox=bbox)
-precomputations = flexmm2d.bbfmm.BB_Precomputations(FMM)
-FMM.load_precomputations(precomputations)
-print('pyfmmlib2d precompute took:           {:0.1f}'.format((time.time()-st)*1000))
+FMM = BB_FMM(px, py, Laplace_Eval, N_cutoff, p, bbox=bbox, helper=FMM.helper)
+print('flexmm2d precompute took:             {:0.1f}'.format((time.time()-st)*1000))
 st = time.time()
 FMM.build_expansions(tau)
 tt = (time.time()-st)
-print('pyfmmlib2d generation took:           {:0.1f}'.format(tt*1000))
+print('flexmm2d generation took:             {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
 st = time.time()
-self_fmm_eval = FMM.evaluate_to_points(px, py, True)
+self_fmm_eval = FMM.source_evaluation(px, py)
 tt = (time.time()-st)
-print('pyfmmlib2d source eval took:          {:0.1f}'.format(tt*1000))
+print('flexmm2d source eval took:            {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
 
 st = time.time()
-target_fmm_eval = FMM.evaluate_to_points(rx, ry)
+target_fmm_eval = FMM.target_evaluation(rx, ry)
 tt = (time.time()-st)
-print('pyfmmlib2d target eval took:          {:0.1f}'.format(tt*1000))
+print('flexmm2d target eval took:            {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_target/tt/cpu_num/1000), '\033[0m ')
 
 if reference:
@@ -172,11 +155,3 @@ if reference:
     target_err = np.abs(target_fmm_eval - target_reference_eval)/tscale
     print('\nMaximum difference, self:             {:0.2e}'.format(self_err.max()))
     print('Maximum difference, target:           {:0.2e}'.format(target_err.max()))
-
-print('\nRun precomputations once more to show how precomputations work')
-st = time.time()
-FMM = fmm.FMM(px, py, functions, Nequiv, N_cutoff, bbox=bbox)
-precomputations = flexmm2d.bbfmm.BB_Precomputations(FMM, precomputations)
-FMM.load_precomputations(precomputations)
-print('pyfmmlib2d precompute took:           {:0.1f}'.format((time.time()-st)*1000))
-

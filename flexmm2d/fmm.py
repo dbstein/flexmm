@@ -13,44 +13,6 @@ def distribute(ucs, temp, pi, li, li2):
             ucs[li2[pi[i]]] = temp[li[i]]
 
 @numba.njit(parallel=True)
-def build_interaction_list(parents, pcoll, pchild, xmid, ymid, width, li, dilists):
-    """
-    Ahead of time interaction list preparation
-    This should probably be moved to the tree file
-    """
-    # loop over leaves in this level
-    n = parents.size
-    dilists[:] = -1
-    for i in numba.prange(n):
-        # parents index
-        ind = parents[i]
-        xmidi = xmid[i]
-        ymidi = ymid[i]
-        # loop over parents colleagues
-        for j in range(9):
-            pi = pcoll[ind, j]
-            # if colleague exists and isn't the parent itself
-            if pi >= 0 and pi != ind:
-                pch = pchild[pi]
-                # loop over colleagues children
-                for k in range(4):
-                    ci = pch + k
-                    # get the distance offsets
-                    xdist = xmid[ci]-xmidi
-                    ydist = ymid[ci]-ymidi
-                    xd = int(np.round(xdist/width))
-                    yd = int(np.round(ydist/width))
-                    # get index into mutlipoles 
-                    di = li[ci]
-                    # if the multipole was formed, add in interaction
-                    if di >= 0:
-                        for ii in range(7):
-                            for jj in range(7):
-                                if not (ii in [2,3,4] and jj in [2,3,4]):
-                                    if xd == ii-3 and yd == jj-3:
-                                        dilists[ii, jj, i] = di
-
-@numba.njit(parallel=True)
 def add_interactions_prepared(M2Ls, PLEs, dilist, Nequiv):
     # loop over leaves in this level
     for i in numba.prange(dilist.shape[0]):
@@ -67,344 +29,138 @@ def myprint(*args, **kwargs):
 def get_print_function(verbose):
     return myprint if verbose else fake_print
 
-def get_functions(functions):
-
-    source_to_partial_multipole = functions['source_to_partial_multipole']
-    local_expansion_to_target = functions['local_expansion_to_target']
-    kernel_apply_single = functions['kernel_apply_single']
-    kernel_apply_single_check = functions['kernel_apply_single_check']
-
-    @numba.njit(parallel=True, fastmath=True)
-    def upwards_pass(x, y, li, cu, bind, tind, xmid, ymid, tau, pM, e1, e2):
-        """
-        Generic upwards pass function
-        ns: number of all sources
-        nL: number of leaves in this level
-        nl: number of leaves where multipole expansions need to be calculated
-        x,    f8[ns]   - array of all source x values (ordered)
-        y,    f8[ns]   - array of all source y values (ordered)
-        li,   i8[nL]   - link indeces, see explanation in tree
-        cu,   b[nL]    - whether an upwards computation needs to be done
-        bind, i8[nL]   - lower source index for leaf
-        tind, i8[nL]   - upper source index for leaf
-        xmid, f8[nL]   - midpoint of leaf at level (x-coord)
-        ymid, f8[nL]   - midpoint of leaf at level (y-coord)
-        tau,  *[ns]    - density (ordered)
-                            * is f8 or c16
-        pM,   *[nl,**] - partial multipole expansion
-                            * is f8 or c16
-                            ** is deferred to the underlying FMM method
-        e1,   *[**]    - extra array used by method
-        e2,   *[**]    - extra array used by method
-        """
-        for i in numba.prange(bind.size):
-            if cu[i] and li[i] >= 0:
-                bi = bind[i]
-                ti = tind[i]
-                source_to_partial_multipole(x[bi:ti]-xmid[i],
-                    y[bi:ti]-ymid[i], tau[bi:ti], pM[li[i]], e1, e2)
-
-    @numba.njit(parallel=True, fastmath=True)
-    def local_expansion_evaluation(tx, ty, inds, locs, xmids, ymids, LEs, pot, e1, e2):
-        """
-        Generic local expansion evalution
-        nt: number of targets
-        nL: number of levels
-        tx,    f8[nt]   - array of all target x values
-        ty,    f8[nt]   - array of all target y values
-        inds,  i8[nt]   - which level this target is in
-        locs,  i8[nt]   - location in level information for this target
-        xmids, list(nL) - list of xmids for whole tree
-                        - each element is a f8[# leaves in level]
-        ymids, list(nL) - list of ymids for whole tree
-        LEs,   list(nL) - local expansions for whole tree
-        pot,   *[nt]    - potential
-        e1,    list(nL) - list of extra things specific to method
-        e2,    list(nL) - list of extra things specific to method
-        """
-        for i in numba.prange(tx.size):
-            x = tx[i]
-            y = ty[i]
-            ind = inds[i]
-            loc = locs[i]
-            x = x - xmids[ind][loc]
-            y = y - ymids[ind][loc]
-            pot[i] = local_expansion_to_target(LEs[ind][loc], x, y, e1[ind], e2[ind])
-
-    @numba.njit(parallel=True, fastmath=True)
-    def neighbor_evaluation(tx, ty, sx, sy, inds, locs, binds, tinds, colls, tauo, pot, check):
-        """
-        Generic neighbor evalution
-        nt: number of targets
-        ns: number of sources
-        nL: number of levels
-        tx,    f8[nt]   - array of all target x values
-        ty,    f8[nt]   - array of all target y values
-        sx,    f8[ns]   - array of all source x values (ordered)
-        sy,    f8[ns]   - array of all source y values (ordered)
-        inds,  i8[nt]   - which level this target is in
-        locs,  i8[nt]   - location in level information for this target
-        binds, list[nL] - list of all lower indeces into source information
-        tinds, list[nL] - list of all upper indeces into source information
-        colls, list[nL] - list of all colleagues
-        tauo,  *[ns]    - density, ordered
-        pot,   *[nt]    - potential
-        check, bool     - whether to check for source/targ coincidences
-        """
-        for i in numba.prange(tx.size):
-            x = tx[i]
-            y = ty[i]
-            ind = inds[i]
-            loc = locs[i]
-            cols = colls[ind][loc]
-            for j in range(9):
-                ci = cols[j]
-                if ci >= 0:
-                    bind = binds[ind][ci]
-                    tind = tinds[ind][ci]
-                    if tind - bind > 0:
-                        if check:
-                            pot[i] += kernel_apply_single_check(sx[bind:tind], sy[bind:tind], x, y, tauo[bind:tind])
-                        else:
-                            pot[i] += kernel_apply_single(sx[bind:tind], sy[bind:tind], x, y, tauo[bind:tind])
-
-    new_functions = {
-        'upwards_pass'               : upwards_pass,
-        'local_expansion_evaluation' : local_expansion_evaluation,
-        'neighbor_evaluation'        : neighbor_evaluation,
-    }
-    functions.update(new_functions)
-
-    if 'kernel_gradient_apply_single' in functions.keys():
-
-        local_expansion_gradient_to_target = functions['local_expansion_gradient_to_target']
-        kernel_gradient_apply_single = functions['kernel_gradient_apply_single']
-        kernel_gradient_apply_single_check = functions['kernel_gradient_apply_single_check']
-
-        @numba.njit(parallel=True, fastmath=True)
-        def neighbor_gradient_evaluation(tx, ty, sx, sy, inds, locs, binds, tinds, colls, tauo, pot, potx, poty, check):
-            """
-            Generic neighbor evalution
-            nt: number of targets
-            ns: number of sources
-            nL: number of levels
-            tx,    f8[nt]   - array of all target x values
-            ty,    f8[nt]   - array of all target y values
-            sx,    f8[ns]   - array of all source x values (ordered)
-            sy,    f8[ns]   - array of all source y values (ordered)
-            inds,  i8[nt]   - which level this target is in
-            locs,  i8[nt]   - location in level information for this target
-            binds, list[nL] - list of all lower indeces into source information
-            tinds, list[nL] - list of all upper indeces into source information
-            colls, list[nL] - list of all colleagues
-            tauo,  *[ns]    - density, ordered
-            pot,   *[nt]    - potential
-            potx,  *[nt]    - x-derivative of potential
-            poty,  *[nt]    - y-derivative of potential
-            check, bool     - whether to check for source/targ coincidences
-            """
-            for i in numba.prange(tx.size):
-                x = tx[i]
-                y = ty[i]
-                ind = inds[i]
-                loc = locs[i]
-                cols = colls[ind][loc]
-                for j in range(9):
-                    ci = cols[j]
-                    if ci >= 0:
-                        bind = binds[ind][ci]
-                        tind = tinds[ind][ci]
-                        if tind - bind > 0:
-                            if check:
-                                out = kernel_gradient_apply_single_check(sx[bind:tind], sy[bind:tind], x, y, tauo[bind:tind])
-                            else:
-                                out = kernel_gradient_apply_single(sx[bind:tind], sy[bind:tind], x, y, tauo[bind:tind])
-                            pot[i]  += out[0]
-                            potx[i] += out[1]
-                            poty[i] += out[2]
-
-        @numba.njit(parallel=True, fastmath=True)
-        def local_expansion_gradient_evaluation(tx, ty, inds, locs, xmids, ymids, LEs, pot, potx, poty, e1, e2):
-            """
-            Generic local expansion evalution
-            nt: number of targets
-            nL: number of levels
-            tx,    f8[nt]   - array of all target x values
-            ty,    f8[nt]   - array of all target y values
-            inds,  i8[nt]   - which level this target is in
-            locs,  i8[nt]   - location in level information for this target
-            xmids, list(nL) - list of xmids for whole tree
-                            - each element is a f8[# leaves in level]
-            ymids, list(nL) - list of ymids for whole tree
-            LEs,   list(nL) - local expansions for whole tree
-            pot,   *[nt]    - potential
-            potx,  *[nt]    - x-derivative of potential
-            poty,  *[nt]    - y-derivative of potential
-            e1,    list(nL) - list of extra things specific to method
-            e2,    list(nL) - list of extra things specific to method
-            """
-            for i in numba.prange(tx.size):
-                x = tx[i]
-                y = ty[i]
-                ind = inds[i]
-                loc = locs[i]
-                x = x - xmids[ind][loc]
-                y = y - ymids[ind][loc]
-                out = local_expansion_gradient_to_target(LEs[ind][loc], x, y, e1[ind], e2[ind])
-                pot[i]  = out[0]
-                potx[i] = out[1]
-                poty[i] = out[2]
-
-        new_functions = {
-            'neighbor_gradient_evaluation'        : neighbor_gradient_evaluation,
-            'local_expansion_gradient_evaluation' : local_expansion_gradient_evaluation,
-        }
-        functions.update(new_functions)
-
-    return functions
-
 class FMM(object):
-    def __init__(self, x, y, functions, Nequiv=48, Ncutoff=50, iscomplex=False, bbox=None, verbose=False):
+    def __init__(self, x, y, kernel_eval, Ncutoff, dtype, bbox, helper, verbose):
+        # store inputs
         self.x = x
         self.y = y
-        self.bbox = bbox
-        self.Nequiv = Nequiv
+        self.kernel_eval = kernel_eval
         self.Ncutoff = Ncutoff
-        self.functions = functions
-        self.dtype = np.complex128 if iscomplex else np.float64
+        self.dtype = dtype
+        self.bbox = bbox
+        self.helper = helper
         self.verbose = verbose
+        # get print function
         self.print = get_print_function(self.verbose)
+        # reset bbox to be compatible with helper
+        self.bbox = self.helper.get_bbox(self.x, self.y, self.bbox)
+        # build the tree
         self.build_tree()
+        # build basic functions
+        self.helper.build_base_functions(kernel_eval)
+        # register some useful neighbor evaluators
+        self.register_neighbor_evaluator(self.helper.functions['kernel_apply_single'], 'neighbor_potential_target_evaluation')
+        self.register_neighbor_evaluator(self.helper.functions['kernel_apply_single_check'], 'neighbor_potential_source_evaluation')
     def build_tree(self):
         st = time.time()
         self.tree = Tree(self.x, self.y, self.Ncutoff, self.bbox)
         tree_formation_time = (time.time() - st)*1000
         self.print('....Tree formed in:             {:0.1f}'.format(tree_formation_time))
-    def load_precomputations(self, precomputations):
-        self.Precomputations = precomputations
+    def source_to_partial_multipole(self, ind, partial_multipole):
+        raise NotImplementedError
+    def get_s2pM_extras(self, ind):
+        raise NotImplementedError
+    def partial_multipole_to_multipole(self, ind, pM):
+        return pM
+    def partial_local_to_local(self, ind, pL):
+        return pL
     def build_expansions(self, tau):
-        functions = self.functions
+        # extract tree, helper, functions
         tree = self.tree
+        helper = self.helper
+        functions = helper.functions
+        Nequiv = self.Nequiv
 
-        partial_multipole_to_multipole = functions['partial_multipole_to_multipole']
-        partial_local_to_local = functions['partial_local_to_local']
-        upwards_pass = functions['upwards_pass']
-        Nequiv, Ncutoff = self.Nequiv, self.Ncutoff
-        
+        # order and stores tau
         tau_ordered = tau[tree.ordv]
         self.tau = tau
         self.tau_ordered = tau_ordered
+        
+        # initialize multipoles
         self.multipoles = [None,]*tree.levels
         self.reshaped_multipoles = [None,]*tree.levels
+
         # upwards pass - start at bottom leaf nodes and build multipoles up
         st = time.time()
         for ind in reversed(range(tree.levels)[2:]):
             Level = tree.Levels[ind]
-            width = Level.width
-            prec = self.Precomputations[width]
-            M2MC = prec.M2MC
+            # extract precomputations from helper
+            prec = helper.get_precomputation(Level.width)
             # allocate space for the partial multipoles
             anum = Level.n_allocate_density
             partial_multipole = np.zeros([anum, Nequiv], dtype=self.dtype)
-            self.multipoles[ind] = np.empty([anum, Nequiv], dtype=self.dtype)
             # check if there is a level below us, if there is, lift all its expansions
             if ind != tree.levels-1:
                 ancestor_level = tree.Levels[ind+1]
-                temp1 = M2MC.dot(self.reshaped_multipoles[ind+1].T).T
+                temp1 = prec.M2MC.dot(self.reshaped_multipoles[ind+1].T).T
                 distribute(partial_multipole, temp1, ancestor_level.short_parent_ind, ancestor_level.parent_density_ind, Level.this_density_ind)
-            e1, e2 = prec.get_upwards_extras()
-            upwards_pass(tree.x, tree.y, Level.this_density_ind, Level.compute_upwards, Level.bot_ind, Level.top_ind, Level.xmid, Level.ymid, tau_ordered, partial_multipole, e1, e2)
-            e1 = prec.get_partial_multipole_to_multipole_extra()
-            self.multipoles[ind] = partial_multipole_to_multipole(partial_multipole, e1)
+            # execute source --> partial_multipole routine
+            self.source_to_partial_multipole(ind, partial_multipole)
+            # transform this to an actual multipole
+            self.multipoles[ind] = self.partial_multipole_to_multipole(prec, partial_multipole)
+            # reshape the multipole
             resh = (int(anum/4), int(Nequiv*4))
             self.reshaped_multipoles[ind] = np.reshape(self.multipoles[ind], resh)
             if self.reshaped_multipoles[ind].flags.owndata:
-                raise Exception('Something went wrong with reshaping the equivalent densities, it made a copy instead of a view.')
+                raise Exception('Reshaped multipoles needs to use multipoles data...')
         et = time.time()
         self.print('....Time for upwards pass:      {:0.2f}'.format(1000*(et-st)))
+
         # downwards pass - start at top and work down to build up local expansions
         st = time.time()
+        # initialize local expansions
         self.Partial_Local_Expansions = [None,]*tree.levels
         self.Local_Expansions = [None,]*tree.levels
         self.Local_Expansions[0] = np.zeros([1, Nequiv], dtype=self.dtype)
         self.Local_Expansions[1] = np.zeros([4, Nequiv], dtype=self.dtype)
+        self.Partial_Local_Expansions[2] = np.zeros([16, Nequiv], dtype=self.dtype)
         for ind in range(2, tree.levels):
             Level = tree.Levels[ind]
-            width = Level.width
-            prec = self.Precomputations[width]
-            L2LC = prec.L2LC
-            M2LF = prec.M2LF
+            prec = helper.get_precomputation(Level.width)
             Parent_Level = tree.Levels[ind-1]
-            if ind == 2:
-                self.Partial_Local_Expansions[ind] = np.zeros([16, Nequiv], dtype=self.dtype)
             M2Ls = np.zeros([self.multipoles[ind].shape[0], Nequiv])
-            largest_cutoff = 0
-            for i in range(7):
-                for j in range(7):
-                    if hasattr(M2LF[i,j], 'cutoff'):
-                        largest_cutoff = max(largest_cutoff, M2LF[i,j].cutoff)
-            # build the interaction lists
-            dilists = np.empty([7, 7, Level.n_node], dtype=int)
-            build_interaction_list(Level.parent_ind, Parent_Level.colleagues, Parent_Level.children_ind, Level.xmid, Level.ymid, Level.width, Level.this_density_ind, dilists)
+            # extract the interaction list
+            dilists = tree.interaction_lists[ind]
             # add up interactions
-            work = np.empty([largest_cutoff, self.multipoles[ind].shape[0]], dtype=tau.dtype)
+            work = np.empty([prec.largest_cutoff, self.multipoles[ind].shape[0]], dtype=tau.dtype)
             for i in range(7):
                 for j in range(7):
                     if not (i in [2,3,4] and j in [2,3,4]):
-                        workmat = work[:M2LF[i,j].cutoff] if hasattr(M2LF[i,j], 'cutoff') else None
-                        M2LF[i,j](self.multipoles[ind].T, out=M2Ls.T, work=workmat)
+                        workmat = work[:prec.M2LF[i,j].cutoff] if hasattr(prec.M2LF[i,j], 'cutoff') else None
+                        prec.M2LF[i,j](self.multipoles[ind].T, out=M2Ls.T, work=workmat)
                         add_interactions_prepared(M2Ls, self.Partial_Local_Expansions[ind], dilists[i,j], Nequiv)
             # convert partial local expansions to local local_expansions
-            e1 = prec.get_partial_local_to_local_extra()
-            self.Local_Expansions[ind] = partial_local_to_local(self.Partial_Local_Expansions[ind], e1)
+            self.Local_Expansions[ind] = self.partial_local_to_local(prec, self.Partial_Local_Expansions[ind])
             # move local expansions downwards
             if ind < tree.levels-1:
                 doit = Level.compute_downwards
                 descendant_level = tree.Levels[ind+1]
                 local_expansions = self.Local_Expansions[ind][doit]
-                partial_local_expansions = L2LC.dot(local_expansions.T).T
+                partial_local_expansions = prec.L2LC.dot(local_expansions.T).T
                 sorter = np.argsort(Level.children_ind[doit])
                 self.Partial_Local_Expansions[ind+1] = partial_local_expansions[sorter].reshape([descendant_level.n_node, Nequiv])
         et = time.time()
         self.print('....Time for downwards pass:    {:0.2f}'.format(1000*(et-st)))
+    def register_neighbor_evaluator(self, kernel_apply_single, name):
+        self.helper.register_neighbor_evaluator(kernel_apply_single, name)
 
-    def evaluate_to_points(self, x,  y, check_self=False):
-        functions = self.functions
-        prec = self.Precomputations
+    def source_evaluation(self, x, y):
+        return self.evaluate_to_points(x, y, 'neighbor_potential_source_evaluation')
+    def target_evaluation(self, x, y):
+        return self.evaluate_to_points(x, y, 'neighbor_potential_target_evaluation')
+
+    def evaluate_to_points(self, x, y, name):
         tree = self.tree
-
-        local_expansion_evaluation = functions['local_expansion_evaluation']
-        neighbor_evaluation = functions['neighbor_evaluation']
+        neighbor_evaluation = self.helper.functions[name]
 
         # get level ind, level loc for the point (x, y)
         inds, locs = tree.locate_points(x, y)
         # evaluate local expansions
         pot = np.zeros(x.size, dtype=self.dtype)
         Local_Expansions = self.Local_Expansions
-        e1, e2 = prec.get_local_expansion_extras()
-        local_expansion_evaluation(x, y, inds, locs, tree.xmids, tree.ymids, Local_Expansions, pot, e1, e2)
+        self.local_to_targets(x, y, pot, inds, locs)
+        pot = pot.reshape([1, x.size])
         # evaluate interactions from neighbor cells to (x, y)
-        neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, tree.bot_inds, tree.top_inds, tree.colleagues, self.tau_ordered, pot, check_self)
-        return pot
-
-    def evaluate_gradient_to_points(self, x,  y, check_self=False):
-        functions = self.functions
-        prec = self.Precomputations
-        tree = self.tree
-
-        local_expansion_evaluation = functions['local_expansion_gradient_evaluation']
-        neighbor_evaluation = functions['neighbor_gradient_evaluation']
-
-        # get level ind, level loc for the point (x, y)
-        inds, locs = tree.locate_points(x, y)
-        # evaluate local expansions
-        pot = np.zeros(x.size, dtype=self.dtype)
-        potx = np.zeros(x.size, dtype=self.dtype)
-        poty = np.zeros(x.size, dtype=self.dtype)
-        Local_Expansions = self.Local_Expansions
-        e1, e2 = prec.get_local_expansion_extras()
-        local_expansion_evaluation(x, y, inds, locs, tree.xmids, tree.ymids, Local_Expansions, pot, potx, poty, e1, e2)
-        # evaluate interactions from neighbor cells to (x, y)
-        neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, tree.bot_inds, tree.top_inds, tree.colleagues, self.tau_ordered, pot, potx, poty, check_self)
-        return pot, potx, poty
+        neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, tree.bot_inds, tree.top_inds, tree.colleagues, self.tau_ordered, pot)
+        return pot[0]
 

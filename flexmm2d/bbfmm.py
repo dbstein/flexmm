@@ -3,25 +3,7 @@ import numba
 import scipy as sp
 import scipy.linalg
 from .fmm import FMM
-from .fmm import get_functions as fmm_get_functions
-from .precomputations import Precomputation, Precomputations
-
-"""
-Define necessary functions and precomputations for BB-Style FMM
-"""
-
-def BBFMM_PREP(functions):
-    functions = get_functions(functions)
-    functions = fmm_get_functions(functions)
-    functions = wrap_functions(functions)
-    return functions
-
-def BBFMM(x, y, functions, tau, p=10, Ncutoff=50, iscomplex=False, bbox=None, verbose=False):
-    fmm = FMM(x, y, functions, p**2, Ncutoff, iscomplex, bbox, verbose)
-    precompute(fmm, p)
-    fmm.general_precomputations()
-    fmm.build_expansions(tau)
-    return fmm
+from .helpers import Helper, Precomputation
 
 ############################################################################
 # These are helper functions for this particular FMM implementation
@@ -110,46 +92,47 @@ def chebeval_d1(x, c):
         c0 = cm
     return c0 + x*d0 - d1
 
-def get_functions(functions):
+class BB_Precomputation(Precomputation):
+    def __init__(self, width, fmm, info):
+        super().__init__(width)
+        self.precompute(fmm, info)
+        self.compress()
+    def precompute(self, fmm, info):
+        self.M2MC = info['M2MC']
+        self.L2LC = info['L2LC']
+        VI = info['VI']
+        nodex = info['nodex']
+        nodey = info['nodey']
 
-    kernel_apply_single       = functions['kernel_apply_single']
+        tree = fmm.tree
+        width = self.width
+        KF = fmm.helper.functions['kernel_form']
+        dtype = fmm.dtype
 
-    ############################################################################
-    # These functions DEPEND on the particular FMM implementation
+        # get all required M2L translations
+        M2L = np.empty([7,7], dtype=object)
+        for indx in range(7):
+            for indy in range(7):
+                if indx-3 in [-1, 0, 1] and indy-3 in [-1, 0, 1]:
+                    M2L[indx, indy] = None
+                else:
+                    snodex = nodex*0.5*width
+                    snodey = nodey*0.5*width
+                    translated_snodex = snodex + (indx-3)*width
+                    translated_snodey = snodey + (indy-3)*width
+                    W1 = KF(translated_snodex, translated_snodey, snodex, snodey, mdtype=dtype)
+                    M2L[indx,indy] = VI.dot(W1).dot(VI.T)
+        self.M2L = M2L
+        # used for rescaling things
+        self.width_adj = 2.0/width
+        self.p = fmm.p
 
-    @numba.njit(fastmath=True)
-    def source_to_partial_multipole(sx, sy, tau, expansion, width_adj, p):
-        expansion[:] = anterpolate2(p, sx*width_adj, sy*width_adj, tau)
-
-    def partial_multipole_to_multipole(pM, dummy):
-        return pM
-
-    def partial_local_to_local(pL, dummy):
-        return pL
-
-    @numba.njit(fastmath=True)
-    def local_expansion_to_target(expansion, tx, ty, width_adj, p):
-        return chebeval2d1(tx*width_adj, ty*width_adj, expansion.reshape(p,p))
-
-    new_functions = {
-        'partial_multipole_to_multipole' : partial_multipole_to_multipole,
-        'partial_local_to_local'         : partial_local_to_local,
-        'source_to_partial_multipole'    : source_to_partial_multipole,
-        'local_expansion_to_target'      : local_expansion_to_target,
-        'chebV2'                         : chebV2,
-    }
-    functions.update(new_functions)
-
-    return functions
-
-class BB_Precomputations(Precomputations):
-    def __init__(self, fmm, precomputations=None):
-        super().__init__(precomputations)
-
-        if hasattr(precomputations, 'info'):
-            self.info = precomputations.info
-        else:
-            p = int(np.round(np.sqrt(fmm.Nequiv)))
+class BB_Helper(Helper):
+    def __init__(self, helper=None):
+        super().__init__(helper)
+    def prepare(self, fmm):
+        if not hasattr(self, 'info'):
+            p = fmm.p
             # some basic chebyshev stuff
             nodexv = np.polynomial.chebyshev.chebgauss(p)[0][::-1]
             nodeyv = np.polynomial.chebyshev.chebgauss(p)[0][::-1]
@@ -186,61 +169,63 @@ class BB_Precomputations(Precomputations):
                 'L2LC'  : L2LC,
             }
 
-        self.prepare(fmm)
-
-    def prepare(self, fmm):
         tree = fmm.tree
         self.width_adjs = []
-        self.ps = []
         for Level in tree.Levels:
             width = Level.width
             if not self.has_precomputation(width):
                 precomp = BB_Precomputation(width, fmm, self.info)
                 self.add_precomputation(precomp)
-            self.width_adjs.append(self[width].width_adj)
-            self.ps.append(self[width].p)
-    def get_local_expansion_extras(self):
-        return self.width_adjs, self.ps
+            precomp = self.get_precomputation(width)
+            self.width_adjs.append(precomp.width_adj)
 
-class BB_Precomputation(Precomputation):
-    def __init__(self, width, fmm, info):
-        super().__init__(width)
-        self.precompute(fmm, info)
-        self.compress()
+    def build_s2pM_function(self):
+        if 'source2pMs' not in self.functions:
+            @numba.njit(parallel=True, fastmath=True)
+            def source2pMs(x, y, li, cu, bind, tind, xmid, ymid, tau, pM, p, width_adj):
+                for i in numba.prange(bind.size):
+                    if cu[i] and li[i] >= 0:
+                        bi = bind[i]
+                        ti = tind[i]
+                        sx = x[bi:ti]-xmid[i]
+                        sy = y[bi:ti]-ymid[i]
+                        pM[li[i],:] = anterpolate2(p, sx*width_adj, sy*width_adj, tau[bi:ti])
+            self.functions['source2pMs'] = source2pMs
+    def build_l2t_function(self):
+        kernel_apply_single = self.functions['kernel_apply_single']
+        
+        if 'L2targets' not in self.functions:
+            @numba.njit(parallel=True, fastmath=True)
+            def local_expansion_evaluation(tx, ty, inds, locs, xmids, ymids, LEs, pot, p, width_adjs):
+                for i in numba.prange(tx.size):
+                    x = tx[i]
+                    y = ty[i]
+                    ind = inds[i]
+                    loc = locs[i]
+                    x = x - xmids[ind][loc]
+                    y = y - ymids[ind][loc]
+                    width_adj = width_adjs[ind]
+                    expansion = LEs[ind][loc]
+                    pot[i] = chebeval2d1(x*width_adj, y*width_adj, expansion.reshape(p,p))
+            self.functions['L2targets'] = local_expansion_evaluation
 
-    def precompute(self, fmm, info):
-        tree = fmm.tree
-        width = self.width
-        p = int(np.round(np.sqrt(fmm.Nequiv)))
-        KF = fmm.functions['kernel_form']
-        dtype = fmm.dtype
-
-        nodex = info['nodex']
-        nodey = info['nodey']
-        VI    = info['VI']
-        self.M2MC  = info['M2MC']
-        self.L2LC  = info['L2LC']
-
-        # get all required M2L translations
-        M2L = np.empty([7,7], dtype=object)
-        for indx in range(7):
-            for indy in range(7):
-                if indx-3 in [-1, 0, 1] and indy-3 in [-1, 0, 1]:
-                    M2L[indx, indy] = None
-                else:
-                    snodex = nodex*0.5*width
-                    snodey = nodey*0.5*width
-                    translated_snodex = snodex + (indx-3)*width
-                    translated_snodey = snodey + (indy-3)*width
-                    W1 = KF(translated_snodex, translated_snodey, snodex, snodey, mdtype=dtype)
-                    M2L[indx,indy] = VI.dot(W1).dot(VI.T)
-        self.M2L = M2L
-        # used for rescaling things
-        self.width_adj = 2.0/width
+class BB_FMM(FMM):
+    def __init__(self, x, y, kernel_eval, Ncutoff=50, p=8, dtype=float, bbox=None, helper=BB_Helper(), verbose=False):
+        super().__init__(x, y, kernel_eval, Ncutoff, dtype, bbox, helper, verbose)
         self.p = p
-    def get_upwards_extras(self):
-        return self.width_adj, self.p
-    def get_partial_multipole_to_multipole_extra(self):
-        return None
-    def get_partial_local_to_local_extra(self):
-        return None
+        self.Nequiv = self.p**2
+        self.helper.build_s2pM_function()
+        self.helper.build_l2t_function()
+        self.helper.prepare(self)
+    def source_to_partial_multipole(self, ind, partial_multipole):
+        tree = self.tree
+        Level = tree.Levels[ind]
+        tau_ordered = self.tau_ordered
+        prec = self.helper.get_precomputation(Level.width)
+        self.helper.functions['source2pMs'](tree.x, tree.y, Level.this_density_ind,
+            Level.compute_upwards, Level.bot_ind, Level.top_ind, Level.xmid, Level.ymid,
+            tau_ordered, partial_multipole, self.p, prec.width_adj)
+    def local_to_targets(self, x, y, pot, inds, locs):
+        tree = self.tree
+        self.helper.functions['L2targets'](x, y, inds, locs, tree.xmids, tree.ymids,
+            self.Local_Expansions, pot, self.p, self.helper.width_adjs)

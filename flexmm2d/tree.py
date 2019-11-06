@@ -397,6 +397,44 @@ def numba_get_Xlist(depths, colleagues, leaf, Xlist):
                         XlistI = True
             Xlist[i] = XlistI
 
+@numba.njit(parallel=True)
+def build_interaction_list(parents, pcoll, pchild, xmid, ymid, width, li, dilists):
+    """
+    Ahead of time interaction list preparation
+    This should probably be moved to the tree file
+    """
+    # loop over leaves in this level
+    n = parents.size
+    dilists[:] = -1
+    for i in numba.prange(n):
+        # parents index
+        ind = parents[i]
+        xmidi = xmid[i]
+        ymidi = ymid[i]
+        # loop over parents colleagues
+        for j in range(9):
+            pi = pcoll[ind, j]
+            # if colleague exists and isn't the parent itself
+            if pi >= 0 and pi != ind:
+                pch = pchild[pi]
+                # loop over colleagues children
+                for k in range(4):
+                    ci = pch + k
+                    # get the distance offsets
+                    xdist = xmid[ci]-xmidi
+                    ydist = ymid[ci]-ymidi
+                    xd = int(np.round(xdist/width))
+                    yd = int(np.round(ydist/width))
+                    # get index into mutlipoles 
+                    di = li[ci]
+                    # if the multipole was formed, add in interaction
+                    if di >= 0:
+                        for ii in range(7):
+                            for jj in range(7):
+                                if not (ii in [2,3,4] and jj in [2,3,4]):
+                                    if xd == ii-3 and yd == jj-3:
+                                        dilists[ii, jj, i] = di
+
 class Tree(object):
     """
     Quadtree object for use in computing FMMs
@@ -413,16 +451,20 @@ class Tree(object):
         self.y = y.copy()
         self.points_per_leaf = ppl
         self.bbox = bbox
-        xmin = self.x.min() if self.bbox is None else min(self.x.min(), bbox[0])
-        xmax = self.x.max() if self.bbox is None else max(self.x.max(), bbox[1])
-        ymin = self.y.min() if self.bbox is None else min(self.y.min(), bbox[2])
-        ymax = self.y.max() if self.bbox is None else max(self.y.max(), bbox[3])
-        mmin = int(np.floor(np.min([xmin, ymin])))
-        mmax = int(np.ceil (np.max([xmax, ymax])))
-        self.xmin = mmin
-        self.xmax = mmax
-        self.ymin = mmin
-        self.ymax = mmax
+        # xmin = self.x.min() if self.bbox is None else min(self.x.min(), bbox[0])
+        # xmax = self.x.max() if self.bbox is None else max(self.x.max(), bbox[1])
+        # ymin = self.y.min() if self.bbox is None else min(self.y.min(), bbox[2])
+        # ymax = self.y.max() if self.bbox is None else max(self.y.max(), bbox[3])
+        # mmin = int(np.floor(np.min([xmin, ymin])))
+        # mmax = int(np.ceil (np.max([xmax, ymax])))
+        # self.xmin = mmin
+        # self.xmax = mmax
+        # self.ymin = mmin
+        # self.ymax = mmax
+        self.xmin = bbox[0]
+        self.xmax = bbox[1]
+        self.ymin = bbox[2]
+        self.ymax = bbox[3]
         self.N = self.x.shape[0]
         # vector to allow reordering of density tau
         self.ordv = np.arange(self.N)
@@ -463,6 +505,8 @@ class Tree(object):
         self.top_inds = [Level.top_ind for Level in self.Levels]
         self.colleagues = [Level.colleagues for Level in self.Levels]
         self.children_inds = [Level.children_ind for Level in self.Levels]
+        # build the interaction list
+        self.build_interaction_lists()
     def tag_colleagues(self):
         """
         Tag colleagues (neighbors at same level) for every node in tree
@@ -526,6 +570,14 @@ class Tree(object):
         for ind, Level in reversed(list(enumerate(self.Levels))):
             descendant = None if ind==self.levels-1 else self.Levels[ind+1]
             Level.get_depths(descendant)
+    def build_interaction_lists(self):
+        self.interaction_lists = [None,]*self.levels
+        for ind in range(2, self.levels):
+            Level = self.Levels[ind]
+            Parent_Level = self.Levels[ind-1]
+            dilists = np.empty([7, 7, Level.n_node], dtype=int)
+            build_interaction_list(Level.parent_ind, Parent_Level.colleagues, Parent_Level.children_ind, Level.xmid, Level.ymid, Level.width, Level.this_density_ind, dilists)
+            self.interaction_lists[ind] = dilists
 
     """
     Information functions
