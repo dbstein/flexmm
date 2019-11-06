@@ -451,20 +451,22 @@ class Tree(object):
         self.y = y.copy()
         self.points_per_leaf = ppl
         self.bbox = bbox
-        # xmin = self.x.min() if self.bbox is None else min(self.x.min(), bbox[0])
-        # xmax = self.x.max() if self.bbox is None else max(self.x.max(), bbox[1])
-        # ymin = self.y.min() if self.bbox is None else min(self.y.min(), bbox[2])
-        # ymax = self.y.max() if self.bbox is None else max(self.y.max(), bbox[3])
-        # mmin = int(np.floor(np.min([xmin, ymin])))
-        # mmax = int(np.ceil (np.max([xmax, ymax])))
-        # self.xmin = mmin
-        # self.xmax = mmax
-        # self.ymin = mmin
-        # self.ymax = mmax
-        self.xmin = bbox[0]
-        self.xmax = bbox[1]
-        self.ymin = bbox[2]
-        self.ymax = bbox[3]
+        if self.bbox is None:
+            xmin = self.x.min() if self.bbox is None else min(self.x.min(), bbox[0])
+            xmax = self.x.max() if self.bbox is None else max(self.x.max(), bbox[1])
+            ymin = self.y.min() if self.bbox is None else min(self.y.min(), bbox[2])
+            ymax = self.y.max() if self.bbox is None else max(self.y.max(), bbox[3])
+            mmin = int(np.floor(np.min([xmin, ymin])))
+            mmax = int(np.ceil (np.max([xmax, ymax])))
+            self.xmin = mmin
+            self.xmax = mmax
+            self.ymin = mmin
+            self.ymax = mmax
+        else:
+            self.xmin = bbox[0]
+            self.xmax = bbox[1]
+            self.ymin = bbox[2]
+            self.ymax = bbox[3]
         self.N = self.x.shape[0]
         # vector to allow reordering of density tau
         self.ordv = np.arange(self.N)

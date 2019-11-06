@@ -146,9 +146,8 @@ print('flexmm2d target eval took:            {:0.1f}'.format(tt*1000))
 print('...Points/Second/Core (thousands)    \033[1m', int(N_target/tt/cpu_num/1000), '\033[0m ')
 
 if reference:
-    sscale = np.abs(self_reference_eval).max()
-    tscale = np.abs(target_reference_eval).max()
-    self_err = np.abs(self_fmm_eval - self_reference_eval)/sscale
-    target_err = np.abs(target_fmm_eval - target_reference_eval)/tscale
+    scale = np.abs(self_reference_eval).max()
+    self_err = np.abs(self_fmm_eval - self_reference_eval)/scale
+    target_err = np.abs(target_fmm_eval - target_reference_eval)/scale
     print('\nMaximum difference, self:             {:0.2e}'.format(self_err.max()))
     print('Maximum difference, target:           {:0.2e}'.format(target_err.max()))

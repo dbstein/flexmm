@@ -1,7 +1,5 @@
 import numpy as np
 import numba
-import scipy as sp
-import scipy.linalg
 from ..float_dict import FloatDict
 
 def get_level_information(node_width, theta, N):
@@ -239,6 +237,16 @@ class Helper(object):
             evaluator = [neighbor_evaluation, local_expansion_evaluation, outputs]
             self.evaluators[name] = evaluator
 
+class SVD_Solver(object):
+    def __init__(self, A, tol=1e-15):
+        self.A = A
+        self.U, S, self.VH = np.linalg.svd(self.A)
+        S[S < tol] = np.Inf
+        self.SI = 1.0/S
+    def __call__(self, b):
+        mult = self.SI[:,None] if len(b.shape) > 1 else self.SI
+        return self.VH.T.dot(mult*self.U.T.dot(b))
+
 class Precomputation(object):
     def __init__(self, width, fmm, svd_tol=1e-14):
         self.width = width
@@ -253,9 +261,11 @@ class Precomputation(object):
         theta = np.linspace(0, 2*np.pi, Nequiv, endpoint=False)
         sx, sy, lx, ly, sr, lr = get_level_information(width, theta, Nequiv)
         small_to_large = KF(sx, sy, lx, ly, mdtype=dtype)
-        self.S2L_LU = sp.linalg.lu_factor(small_to_large, overwrite_a=True, check_finite=False)
+        self.S2L_Solver = SVD_Solver(small_to_large)
+        # self.S2L_LU = sp.linalg.lu_factor(small_to_large, overwrite_a=True, check_finite=False)
         large_to_small = KF(sx, sy, lx, ly, mdtype=dtype)
-        self.L2S_LU = sp.linalg.lu_factor(large_to_small, overwrite_a=True, check_finite=False)
+        self.L2S_Solver = SVD_Solver(large_to_small)
+        # self.L2S_LU = sp.linalg.lu_factor(large_to_small, overwrite_a=True, check_finite=False)
         # get Collected Equivalent Coordinates for the smaller level
         ssx, ssy, _, _, _, _ = get_level_information(0.5*width, theta, Nequiv)
         cexs = np.concatenate([

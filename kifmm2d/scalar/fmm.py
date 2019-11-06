@@ -1,6 +1,4 @@
 import numpy as np
-import scipy as sp
-import scipy.linalg
 import numba
 import time
 from ..tree import Tree
@@ -104,7 +102,8 @@ class FMM(object):
                 Level.top_ind, Level.xmid, Level.ymid, tau_ordered,
                 partial_multipole, prec.large_x, prec.large_y, self.extras_ordered)
             # transform this to an actual multipole
-            self.multipoles[ind] = sp.linalg.lu_solve(prec.S2L_LU, partial_multipole.T, overwrite_b=True, check_finite=False).T
+            # self.multipoles[ind] = sp.linalg.lu_solve(prec.S2L_LU, partial_multipole.T, overwrite_b=True, check_finite=False).T
+            self.multipoles[ind] = prec.S2L_Solver(partial_multipole.T).T.copy()
             # reshape the multipole
             resh = (int(anum/4), int(Nequiv*4))
             self.reshaped_multipoles[ind] = np.reshape(self.multipoles[ind], resh)
@@ -143,7 +142,7 @@ class FMM(object):
                         prec.M2LF[i,j](self.multipoles[ind].T, out=M2Ls.T, work=workmat)
                         add_interactions_prepared(M2Ls, self.Partial_Local_Expansions[ind], dilists[i,j], Nequiv)
             # convert partial local expansions to local local_expansions
-            self.Local_Expansions[ind] = sp.linalg.lu_solve(prec.L2S_LU, self.Partial_Local_Expansions[ind].T, overwrite_b=True, check_finite=False).T
+            self.Local_Expansions[ind] = prec.L2S_Solver(self.Partial_Local_Expansions[ind].T).T.copy()
             # move local expansions downwards
             if ind < tree.levels-1:
                 doit = Level.compute_downwards
