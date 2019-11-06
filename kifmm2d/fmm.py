@@ -4,6 +4,7 @@ import scipy.linalg
 import numba
 import time
 from .tree import Tree
+from .helpers import Helper
 import sys
 
 @numba.njit(parallel=True)
@@ -30,11 +31,12 @@ def get_print_function(verbose):
     return myprint if verbose else fake_print
 
 class FMM(object):
-    def __init__(self, x, y, kernel_eval, Ncutoff, dtype, bbox, helper, verbose):
+    def __init__(self, x, y, kernel_eval, Ncutoff, Nequiv, dtype=float, bbox=None, helper=Helper(), verbose=False):
         # store inputs
         self.x = x
         self.y = y
         self.kernel_eval = kernel_eval
+        self.Nequiv = Nequiv
         self.Ncutoff = Ncutoff
         self.dtype = dtype
         self.bbox = bbox
@@ -49,32 +51,34 @@ class FMM(object):
         # build basic functions
         self.helper.build_base_functions(kernel_eval)
         # register some useful neighbor evaluators
-        self.register_neighbor_evaluator(self.helper.functions['kernel_apply_single'], 'neighbor_potential_target_evaluation')
-        self.register_neighbor_evaluator(self.helper.functions['kernel_apply_single_check'], 'neighbor_potential_source_evaluation')
+        self.register_evaluator(self.helper.functions['kernel_app'], self.helper.functions['extra_kernel_app'], 'potential_evaluation', 1)
+        # register some useful upwardor functions
+        self.register_upwardor(self.helper.functions['extra_kernel_app'], 'slp')
+        # build some functions
+        self.helper.prepare(self)
     def build_tree(self):
         st = time.time()
         self.tree = Tree(self.x, self.y, self.Ncutoff, self.bbox)
         tree_formation_time = (time.time() - st)*1000
         self.print('....Tree formed in:             {:0.1f}'.format(tree_formation_time))
-    def source_to_partial_multipole(self, ind, partial_multipole):
-        raise NotImplementedError
-    def get_s2pM_extras(self, ind):
-        raise NotImplementedError
-    def partial_multipole_to_multipole(self, ind, pM):
-        return pM
-    def partial_local_to_local(self, ind, pL):
-        return pL
-    def upwards_pass(self, tau):
+    def upwards_pass(self, tau, name, extras):
         # extract tree, helper, functions
         tree = self.tree
         helper = self.helper
         functions = helper.functions
         Nequiv = self.Nequiv
 
+        if extras is None:
+            extras = np.row_stack([self.x, self.y])
+        self.extras = extras
+
         # order and stores tau
-        tau_ordered = tau[tree.ordv]
+        if len(tau.shape) == 1:
+            tau = tau.reshape([1, tau.size])
+        tau_ordered = tau[:, tree.ordv]
         self.tau = tau
         self.tau_ordered = tau_ordered
+        self.extras_ordered = self.extras[:, tree.ordv]
         
         # initialize multipoles
         self.multipoles = [None,]*tree.levels
@@ -95,9 +99,12 @@ class FMM(object):
                 temp1 = prec.M2MC.dot(self.reshaped_multipoles[ind+1].T).T
                 distribute(partial_multipole, temp1, ancestor_level.short_parent_ind, ancestor_level.parent_density_ind, Level.this_density_ind)
             # execute source --> partial_multipole routine
-            self.source_to_partial_multipole(ind, partial_multipole)
+            self.helper.upwardors[name](tree.x, tree.y,
+                Level.this_density_ind, Level.compute_upwards, Level.bot_ind,
+                Level.top_ind, Level.xmid, Level.ymid, tau_ordered,
+                partial_multipole, prec.large_x, prec.large_y, self.extras_ordered)
             # transform this to an actual multipole
-            self.multipoles[ind] = self.partial_multipole_to_multipole(prec, partial_multipole)
+            self.multipoles[ind] = sp.linalg.lu_solve(prec.S2L_LU, partial_multipole.T, overwrite_b=True, check_finite=False).T
             # reshape the multipole
             resh = (int(anum/4), int(Nequiv*4))
             self.reshaped_multipoles[ind] = np.reshape(self.multipoles[ind], resh)
@@ -136,7 +143,7 @@ class FMM(object):
                         prec.M2LF[i,j](self.multipoles[ind].T, out=M2Ls.T, work=workmat)
                         add_interactions_prepared(M2Ls, self.Partial_Local_Expansions[ind], dilists[i,j], Nequiv)
             # convert partial local expansions to local local_expansions
-            self.Local_Expansions[ind] = self.partial_local_to_local(prec, self.Partial_Local_Expansions[ind])
+            self.Local_Expansions[ind] = sp.linalg.lu_solve(prec.L2S_LU, self.Partial_Local_Expansions[ind].T, overwrite_b=True, check_finite=False).T
             # move local expansions downwards
             if ind < tree.levels-1:
                 doit = Level.compute_downwards
@@ -148,30 +155,36 @@ class FMM(object):
         et = time.time()
         self.print('....Time for downwards pass:    {:0.2f}'.format(1000*(et-st)))
 
-    def build_expansions(self, tau):
-        self.upwards_pass(tau)
+    def build_expansions(self, tau, name='slp', extras=None):
+        self.upwards_pass(tau, name, extras)
         self.downwards_pass()
 
-    def register_neighbor_evaluator(self, kernel_apply_single, name):
-        self.helper.register_neighbor_evaluator(kernel_apply_single, name)
+    def register_evaluator(self, KAS1, KAS2, name, outputs):
+        self.helper.register_evaluator(KAS1, KAS2, name, outputs)
+    def register_upwardor(self, KAS, name):
+        self.helper.register_upwardor(KAS, name)
 
     def source_evaluation(self, x, y):
-        return self.evaluate_to_points(x, y, 'neighbor_potential_source_evaluation')
+        return self.evaluate_to_points(x, y, 'potential_evaluation', True)
     def target_evaluation(self, x, y):
-        return self.evaluate_to_points(x, y, 'neighbor_potential_target_evaluation')
+        return self.evaluate_to_points(x, y, 'potential_evaluation', False)
 
-    def evaluate_to_points(self, x, y, name):
+    def evaluate_to_points(self, x, y, name, check):
         tree = self.tree
-        neighbor_evaluation = self.helper.functions[name]
+        neighbor_evaluation = self.helper.evaluators[name]
 
         # get level ind, level loc for the point (x, y)
         inds, locs = tree.locate_points(x, y)
+
+        evaluator = self.helper.evaluators[name]
+        neighbor_evaluation = evaluator[0]
+        local_evaluation = evaluator[1]
+        outputs = evaluator[2]
         # evaluate local expansions
-        pot = np.zeros(x.size, dtype=self.dtype)
-        Local_Expansions = self.Local_Expansions
-        self.local_to_targets(x, y, pot, inds, locs)
-        pot = pot.reshape([1, x.size])
+        pot = np.zeros([outputs, x.size], dtype=self.dtype)
+        local_evaluation(x, y, inds, locs, tree.xmids, tree.ymids,
+                self.Local_Expansions, pot, self.helper.large_xs, self.helper.large_ys, self.extras_ordered)
         # evaluate interactions from neighbor cells to (x, y)
-        neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, tree.bot_inds, tree.top_inds, tree.colleagues, self.tau_ordered, pot)
-        return pot[0]
+        neighbor_evaluation(x, y, tree.x, tree.y, inds, locs, tree.bot_inds, tree.top_inds, tree.colleagues, self.tau_ordered, pot, check, self.extras_ordered)
+        return pot
 
