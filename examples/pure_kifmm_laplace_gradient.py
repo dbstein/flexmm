@@ -55,8 +55,8 @@ def Gradient_Eval2(sx, sy, tx, ty, tau, extras):
     return u, ux, uy
 
 N_source = 1000*100
-N_target = 1000*1000*10
-test = 'circle' # clustered or circle or uniform
+N_target = 1000*100
+test = 'uniform' # clustered or circle or uniform
 reference_precision = 4
 
 # construct some data to run FMM on
@@ -92,9 +92,9 @@ else:
     raise Exception('Test is not defined')
 
 # maximum number of points in each leaf of tree for FMM
-N_cutoff = 100
+N_cutoff = 25
 # number of modes in source/check surfaces
-Nequiv = 60
+Nequiv =50
 
 # get random density
 tau = (np.random.rand(N_source))
@@ -104,51 +104,31 @@ print('\nLaplace FMM with', N_source, 'source pts and', N_target, 'target pts.')
 # get reference solution
 reference = True
 if reference:
-    if N_source*N_target <= 10000**2:
-        self_reference_eval = np.zeros(N_source, dtype=complex)
-        KAS(px, py, tau, out=self_reference_eval)
-        # by Direct Sum
-        st = time.time()
-        KAS(px, py, tau, out=self_reference_eval)
-        time_self_eval = (time.time() - st)*1000
-        target_reference_eval = np.zeros(N_target, dtype=complex)
-        KA(px, py, rx, ry, tau, out=target_reference_eval)
-        st = time.time()
-        KA(px, py, rx, ry, tau, out=target_reference_eval)
-        time_target_eval = (time.time() - st)*1000
-        print('\nDirect self evaluation took:        {:0.1f}'.format(time_self_eval))
-        print('Direct target evaluation took:      {:0.1f}'.format(time_target_eval))
-    else:
-        # by FMMLIB2D, if available
-        try:
-            import pyfmmlib2d
-            source = np.row_stack([px, py])
-            target = np.row_stack([rx, ry])
-            dumb_targ = np.row_stack([np.array([0.6, 0.6]), np.array([0.5, 0.5])])
-            st = time.time()
-            out = pyfmmlib2d.RFMM(source, dumb_targ, charge=tau, compute_target_potential=True, precision=reference_precision)
-            tform = time.time() - st
-            print('FMMLIB generation took:               {:0.1f}'.format(tform*1000))
-            print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tform/cpu_num/1000), '\033[0m ')
-            st = time.time()
-            out = pyfmmlib2d.RFMM(source, charge=tau, compute_source_potential=True, compute_source_gradient=True, precision=reference_precision)
-            self_reference_eval   = -0.5*out['source']['u']/np.pi
-            self_reference_eval_x = -0.5*out['source']['u_x']/np.pi
-            self_reference_eval_y = -0.5*out['source']['u_y']/np.pi
-            tt = time.time() - st - tform
-            print('FMMLIB self pot/grad eval took:       {:0.1f}'.format(tt*1000))
-            print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
-            st = time.time()
-            out = pyfmmlib2d.RFMM(source, target, charge=tau, compute_target_potential=True, compute_target_gradient=True, precision=reference_precision)
-            target_reference_eval   = -0.5*out['target']['u']/np.pi
-            target_reference_eval_x = -0.5*out['target']['u_x']/np.pi
-            target_reference_eval_y = -0.5*out['target']['u_y']/np.pi
-            tt = time.time() - st - tform
-            print('FMMLIB target pot/grad eval took:     {:0.1f}'.format(tt*1000))
-            print('...Points/Second/Core (thousands)    \033[1m', int(N_target/tt/cpu_num/1000), '\033[0m ')
-        except:
-            print('')
-            reference = False
+    import pyfmmlib2d
+    source = np.row_stack([px, py])
+    target = np.row_stack([rx, ry])
+    dumb_targ = np.row_stack([np.array([0.6, 0.6]), np.array([0.5, 0.5])])
+    st = time.time()
+    out = pyfmmlib2d.RFMM(source, dumb_targ, charge=tau, compute_target_potential=True, precision=reference_precision)
+    tform = time.time() - st
+    print('FMMLIB generation took:               {:0.1f}'.format(tform*1000))
+    print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tform/cpu_num/1000), '\033[0m ')
+    st = time.time()
+    out = pyfmmlib2d.RFMM(source, charge=tau, compute_source_potential=True, compute_source_gradient=True, precision=reference_precision)
+    self_reference_eval   = -0.5*out['source']['u']/np.pi
+    self_reference_eval_x = -0.5*out['source']['u_x']/np.pi
+    self_reference_eval_y = -0.5*out['source']['u_y']/np.pi
+    tt = time.time() - st - tform
+    print('FMMLIB self pot/grad eval took:       {:0.1f}'.format(tt*1000))
+    print('...Points/Second/Core (thousands)    \033[1m', int(N_source/tt/cpu_num/1000), '\033[0m ')
+    st = time.time()
+    out = pyfmmlib2d.RFMM(source, target, charge=tau, compute_target_potential=True, compute_target_gradient=True, precision=reference_precision)
+    target_reference_eval   = -0.5*out['target']['u']/np.pi
+    target_reference_eval_x = -0.5*out['target']['u_x']/np.pi
+    target_reference_eval_y = -0.5*out['target']['u_y']/np.pi
+    tt = time.time() - st - tform
+    print('FMMLIB target pot/grad eval took:     {:0.1f}'.format(tt*1000))
+    print('...Points/Second/Core (thousands)    \033[1m', int(N_target/tt/cpu_num/1000), '\033[0m ')
 
 FMM = KI_FMM(px, py, Eval, N_cutoff, Nequiv)
 FMM.build_expansions(tau)

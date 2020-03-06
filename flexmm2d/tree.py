@@ -435,6 +435,16 @@ def build_interaction_list(parents, pcoll, pchild, xmid, ymid, width, li, dilist
                                     if xd == ii-3 and yd == jj-3:
                                         dilists[ii, jj, i] = di
 
+try:
+    from numba.typed import List
+    def list_to_typed_list(L):
+        TL = List()
+        for x in L: TL.append(x)
+        return TL
+except:
+    def list_to_typed_list(L):
+        return L
+
 class Tree(object):
     """
     Quadtree object for use in computing FMMs
@@ -451,22 +461,20 @@ class Tree(object):
         self.y = y.copy()
         self.points_per_leaf = ppl
         self.bbox = bbox
-        if self.bbox is None:
-            xmin = self.x.min() if self.bbox is None else min(self.x.min(), bbox[0])
-            xmax = self.x.max() if self.bbox is None else max(self.x.max(), bbox[1])
-            ymin = self.y.min() if self.bbox is None else min(self.y.min(), bbox[2])
-            ymax = self.y.max() if self.bbox is None else max(self.y.max(), bbox[3])
-            mmin = int(np.floor(np.min([xmin, ymin])))
-            mmax = int(np.ceil (np.max([xmax, ymax])))
-            self.xmin = mmin
-            self.xmax = mmax
-            self.ymin = mmin
-            self.ymax = mmax
-        else:
-            self.xmin = bbox[0]
-            self.xmax = bbox[1]
-            self.ymin = bbox[2]
-            self.ymax = bbox[3]
+        # xmin = self.x.min() if self.bbox is None else min(self.x.min(), bbox[0])
+        # xmax = self.x.max() if self.bbox is None else max(self.x.max(), bbox[1])
+        # ymin = self.y.min() if self.bbox is None else min(self.y.min(), bbox[2])
+        # ymax = self.y.max() if self.bbox is None else max(self.y.max(), bbox[3])
+        # mmin = int(np.floor(np.min([xmin, ymin])))
+        # mmax = int(np.ceil (np.max([xmax, ymax])))
+        # self.xmin = mmin
+        # self.xmax = mmax
+        # self.ymin = mmin
+        # self.ymax = mmax
+        self.xmin = bbox[0]
+        self.xmax = bbox[1]
+        self.ymin = bbox[2]
+        self.ymax = bbox[3]
         self.N = self.x.shape[0]
         # vector to allow reordering of density tau
         self.ordv = np.arange(self.N)
@@ -500,13 +508,13 @@ class Tree(object):
         # get post-processed information
         self.post_process()
         # get aggregated information
-        self.leafs = [Level.leaf for Level in self.Levels]
-        self.xmids = [Level.xmid for Level in self.Levels]
-        self.ymids = [Level.ymid for Level in self.Levels]
-        self.bot_inds = [Level.bot_ind for Level in self.Levels]
-        self.top_inds = [Level.top_ind for Level in self.Levels]
-        self.colleagues = [Level.colleagues for Level in self.Levels]
-        self.children_inds = [Level.children_ind for Level in self.Levels]
+        self.leafs         = list_to_typed_list([Level.leaf for Level in self.Levels])
+        self.xmids         = list_to_typed_list([Level.xmid for Level in self.Levels])
+        self.ymids         = list_to_typed_list([Level.ymid for Level in self.Levels])
+        self.bot_inds      = list_to_typed_list([Level.bot_ind for Level in self.Levels])
+        self.top_inds      = list_to_typed_list([Level.top_ind for Level in self.Levels])
+        self.colleagues    = list_to_typed_list([Level.colleagues for Level in self.Levels])
+        self.children_inds = list_to_typed_list([Level.children_ind for Level in self.Levels])
         # build the interaction list
         self.build_interaction_lists()
     def tag_colleagues(self):

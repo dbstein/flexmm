@@ -435,6 +435,16 @@ def build_interaction_list(parents, pcoll, pchild, xmid, ymid, width, li, dilist
                                     if xd == ii-3 and yd == jj-3:
                                         dilists[ii, jj, i] = di
 
+try:
+    from numba.typed import List
+    def list_to_typed_list(L):
+        TL = List()
+        for x in L: TL.append(x)
+        return TL
+except:
+    def list_to_typed_list(L):
+        return L
+
 class Tree(object):
     """
     Quadtree object for use in computing FMMs
@@ -498,13 +508,13 @@ class Tree(object):
         # get post-processed information
         self.post_process()
         # get aggregated information
-        self.leafs = [Level.leaf for Level in self.Levels]
-        self.xmids = [Level.xmid for Level in self.Levels]
-        self.ymids = [Level.ymid for Level in self.Levels]
-        self.bot_inds = [Level.bot_ind for Level in self.Levels]
-        self.top_inds = [Level.top_ind for Level in self.Levels]
-        self.colleagues = [Level.colleagues for Level in self.Levels]
-        self.children_inds = [Level.children_ind for Level in self.Levels]
+        self.leafs         = list_to_typed_list([Level.leaf for Level in self.Levels])
+        self.xmids         = list_to_typed_list([Level.xmid for Level in self.Levels])
+        self.ymids         = list_to_typed_list([Level.ymid for Level in self.Levels])
+        self.bot_inds      = list_to_typed_list([Level.bot_ind for Level in self.Levels])
+        self.top_inds      = list_to_typed_list([Level.top_ind for Level in self.Levels])
+        self.colleagues    = list_to_typed_list([Level.colleagues for Level in self.Levels])
+        self.children_inds = list_to_typed_list([Level.children_ind for Level in self.Levels])
         # build the interaction list
         self.build_interaction_lists()
     def tag_colleagues(self):

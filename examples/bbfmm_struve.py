@@ -5,7 +5,7 @@ import numba
 import time
 import os
 from scipy.special import struve, yn
-from function_generator import FunctionGenerator
+from function_generator.function_generator import FunctionGenerator
 
 """
 Demonstration of the FMM for the Struve Kernel
@@ -58,7 +58,7 @@ bbox = [-10, 110, -10, 110]
 # maximum number of points in each leaf of tree for FMM
 N_cutoff = 30
 # number of modes in Chebyshev expansions
-p = 8
+p = 12
 
 # get random density
 tau = (np.random.rand(N_source))

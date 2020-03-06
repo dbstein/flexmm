@@ -5,6 +5,11 @@ import scipy.linalg
 from .fmm import FMM
 from .helpers import Helper, Precomputation
 
+try:
+    from numba.typed import List
+except:
+    List = list
+
 class KI_Precomputation(Precomputation):
     def __init__(self, width, fmm):
         super().__init__(width)
@@ -61,10 +66,10 @@ class KI_Helper(Helper):
         super().__init__(helper)
     def prepare(self, fmm):
         tree = fmm.tree
-        self.small_xs = []
-        self.small_ys = []
-        self.large_xs = []
-        self.large_ys = []        
+        self.small_xs = List()
+        self.small_ys = List()
+        self.large_xs = List()
+        self.large_ys = List()
         for Level in tree.Levels:
             width = Level.width
             if not self.has_precomputation(width):
