@@ -1,7 +1,7 @@
 import numpy as np
 import numba
 import time
-from ..tree import Tree
+from ...tree import Tree
 from .helpers import Helper
 import sys
 

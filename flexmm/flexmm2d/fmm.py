@@ -3,7 +3,7 @@ import scipy as sp
 import scipy.linalg
 import numba
 import time
-from .tree import Tree
+from ..tree import Tree
 import sys
 
 @numba.njit(parallel=True)
