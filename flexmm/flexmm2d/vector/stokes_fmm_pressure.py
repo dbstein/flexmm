@@ -5,7 +5,7 @@ import scipy.linalg
 import numba
 import time
 if __name__ != "__main__":
-    from ...tree import Tree
+    from ..tree import Tree
 import sys
 
 """

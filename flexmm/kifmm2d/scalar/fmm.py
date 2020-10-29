@@ -4,6 +4,12 @@ import time
 from ...tree import Tree
 from .helpers import Helper
 import sys
+from flexmm.kifmm2d.float_dict import FloatDict
+
+################################################################################
+# Dictionary for storing helpers
+the_help = {}
+################################################################################
 
 @numba.njit(parallel=True)
 def distribute(ucs, temp, pi, li, li2):
@@ -29,7 +35,12 @@ def get_print_function(verbose):
     return myprint if verbose else fake_print
 
 class FMM(object):
-    def __init__(self, x, y, kernel_eval, Ncutoff, Nequiv, dtype=float, bbox=None, helper=Helper(), verbose=False):
+    def __init__(self, x, y, kernel_eval, Ncutoff, Nequiv, dtype=float, bbox=None, verbose=False):
+        # get appropriate helper
+        self.helper_key = (kernel_eval, Nequiv, dtype)
+        if self.helper_key not in the_help:
+            the_help[self.helper_key] = Helper()
+        self.helper = the_help[self.helper_key]
         # store inputs
         self.x = x
         self.y = y
@@ -38,7 +49,7 @@ class FMM(object):
         self.Ncutoff = Ncutoff
         self.dtype = dtype
         self.bbox = bbox
-        self.helper = helper
+        # self.helper = helper
         self.verbose = verbose
         # get print function
         self.print = get_print_function(self.verbose)

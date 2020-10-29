@@ -5,7 +5,7 @@ import scipy.linalg
 import numba
 import time
 if __name__ != "__main__":
-    from ...tree import Tree
+    from ..tree import Tree
 import sys
 
 """
@@ -34,7 +34,6 @@ def get_normals(theta):
 @numba.njit(parallel=True, fastmath=True)
 def kernel_add(sx, sy, tx, ty, taux, tauy, outu, outv):
     uscale = 0.25/np.pi
-    p0 = 0.0
     for j in numba.prange(tx.size):
         u_j = 0.0
         v_j = 0.0
@@ -49,11 +48,8 @@ def kernel_add(sx, sy, tx, ty, taux, tauy, outu, outv):
             u_j += dxdyid2*tauy[i]
             v_j += dxdyid2*taux[i]
             v_j += (logid + dy*dy*id2)*tauy[i]
-        	if j == 0:
-        		p0 += id2*(dx*taux[i]*dy*tauy[i])
         outu[j] = u_j*uscale
         outv[j] = v_j*uscale
-    return p0
 
 @numba.njit(fastmath=True)
 def kernel_apply_single_check(sx, sy, tx, ty, taux, tauy):
@@ -175,7 +171,7 @@ def partial_local_to_local(pL, precomputations, ind):
 
 @numba.njit(fastmath=True)
 def source_to_partial_multipole(sx, sy, taux, tauy, ucheck, vcheck, cx, cy):
-    return kernel_add(sx, sy, cx, cy, taux, tauy, ucheck, vcheck)
+    kernel_add(sx, sy, cx, cy, taux, tauy, ucheck, vcheck)
 
 @numba.njit(fastmath=True)
 def local_expansion_to_target(expansion_x, expansion_y, tx, ty, sx, sy):
@@ -314,7 +310,7 @@ class M2L_Evaluator(object):
     def __call__(self, tau, out, work=None):
         self._call(tau, out, work)
 
-def Stokes_Kernel_Form(sx, sy, tx, ty, snx, sny):
+def Stokes_Kernel_Form(sx, sy, tx, ty):
     ns = sx.size
     nt = tx.size
     SX = sx
@@ -322,8 +318,7 @@ def Stokes_Kernel_Form(sx, sy, tx, ty, snx, sny):
     TX = tx[:,None]
     TY = ty[:,None]
     fscale = 0.25/np.pi
-    pscale = 2*fscale
-    G = np.zeros([2*nt+1, 2*ns+1], dtype=float)
+    G = np.zeros([2*nt, 2*ns], dtype=float)
     dx = ne.evaluate('TX - SX')
     dy = ne.evaluate('TY - SY')
     id2 = ne.evaluate('1.0/(dx**2 + dy**2)')
@@ -338,9 +333,6 @@ def Stokes_Kernel_Form(sx, sy, tx, ty, snx, sny):
     G[:nt, ns:] += GH            
     GH = ne.evaluate('fscale*(logid + dy*dy*id2)')
     G[nt:, ns:] += GH
-    # add pressure correction
-    G[:, -1] = np.concatenate([snx, sny])
-    G[-1, :] = pscale*np.concatenate([dx[0]*id2[0], dy[0]*id2[0]])
     return G
 
 def Add_Pressure_Fix(G, snx, sny, tnx, tny):
