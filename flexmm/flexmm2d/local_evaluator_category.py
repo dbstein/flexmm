@@ -89,7 +89,7 @@ class LocalHelper(object):
             self.functions[name] = neighbor_evaluation
 
 class LocalEvaluator(object):
-    def __init__(self, x, y, cat, kernel_eval, min_distance, ncutoff=20, dtype=float, bbox=None, helper=LocalHelper(), verbose=False):
+    def __init__(self, x, y, cat, kernel_eval, min_distance, ncutoff=20, dtype=float, bbox=None, helper=None, verbose=False):
         # store inputs
         self.x = x
         self.y = y
@@ -99,7 +99,7 @@ class LocalEvaluator(object):
         self.ncutoff = ncutoff
         self.dtype = dtype
         self.bbox = bbox
-        self.helper = helper
+        self.helper = LocalHelper() if helper is None else helper
         self.verbose = verbose
         # get print function
         self.print = get_print_function(self.verbose)
