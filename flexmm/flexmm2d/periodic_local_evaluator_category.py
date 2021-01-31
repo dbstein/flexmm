@@ -112,7 +112,7 @@ def append(x, y, c, bounds, min_distance):
     return xout, yout, cout, iout
 
 class PeriodicLocalEvaluator(object):
-    def __init__(self, x, y, cat, kernel_eval, min_distance, bounds, ncutoff=20, dtype=float, helper=LocalHelper(), verbose=False):
+    def __init__(self, x, y, cat, kernel_eval, min_distance, bounds, ncutoff=20, dtype=float, helper=None, verbose=False):
         """
         Periodic local evaluator --- assumes local evaluation distance is less than box size...
         """
@@ -125,7 +125,7 @@ class PeriodicLocalEvaluator(object):
         self.bounds = bounds
         self.ncutoff = ncutoff
         self.dtype = dtype
-        self.helper = helper
+        self.helper = LocalHelper() if helper is None else helper
         self.verbose = verbose
         # reset bbox to be compatible with helper
         xmin = self.bounds[0]-self.min_distance
@@ -140,6 +140,6 @@ class PeriodicLocalEvaluator(object):
         append_tau = tau[self.append_ind]
         self.LocalEvaluator.load_tau(append_tau)
     def target_evaluation(self, x, y, cat, out):
-        x = shift_to_interval(x, bounds[0:2])
-        y = shift_to_interval(y, bounds[2:4])
+        x = shift_to_interval(x, self.bounds[0:2])
+        y = shift_to_interval(y, self.bounds[2:4])
         return self.LocalEvaluator.evaluate_to_points(x, y, cat, 'neighbor_potential_target_evaluation', out)
